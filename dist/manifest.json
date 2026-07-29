@@ -1,0 +1,11 @@
+{
+  "name": "vniipo-photo-gallery",
+  "version": "1.0.0",
+  "contractVersion": 1,
+  "channel": "stable",
+  "asset": "photo-gallery.js",
+  "immutableUrl": "/shared-ui/photo-gallery/v1.0.0/photo-gallery.js",
+  "stableUrl": "/shared-ui/photo-gallery/stable.js",
+  "sha256": "de88de9dd70d699bfb8bd7fafebfbbd875789da18cf4f710f3a485f751d69f5b",
+  "updateWindowMinutes": 60
+}
