@@ -14,9 +14,10 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "1.0.1");
-  assert.equal(runtime.contractVersion, 1);
+  assert.equal(runtime.version, "2.0.0");
+  assert.equal(runtime.contractVersion, 2);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
+  assert.equal(typeof runtime.createFullscreenSwitcher, "function");
   assert.equal(typeof runtime.destroyInlineGalleries, "function");
 });
 
@@ -65,4 +66,61 @@ test("dot target stays active throughout smooth navigation", () => {
     JSON.parse(JSON.stringify(resolveNavigationIndex(null, 1, false))),
     { activeIndex: 1, pendingIndex: null },
   );
+});
+
+const classList = () => {
+  const values = new Set();
+  return {
+    values,
+    add: (...names) => names.forEach((name) => values.add(name)),
+    remove: (...names) => names.forEach((name) => values.delete(name)),
+    toggle: (name, force) => {
+      if (force) values.add(name);
+      else values.delete(name);
+    },
+  };
+};
+
+const slide = (offsetLeft) => ({
+  offsetLeft,
+  classList: classList(),
+  attributes: new Map(),
+  setAttribute(name, value) { this.attributes.set(name, value); },
+  removeAttribute(name) { this.attributes.delete(name); },
+});
+
+test("fullscreen switcher swaps desktop slides without scrolling the track", () => {
+  const root = { classList: classList() };
+  const slides = [slide(0), slide(400), slide(800)];
+  const calls = [];
+  const track = {
+    clientWidth: 400,
+    classList: classList(),
+    scrollTo(value) { calls.push(value); },
+  };
+  const switcher = runtime.createFullscreenSwitcher({
+    root,
+    track,
+    slides,
+    initialIndex: 0,
+    directDesktop: true,
+  });
+  switcher.goTo(2, "smooth");
+  assert.equal(switcher.activeIndex, 2);
+  assert.equal(calls.length, 0);
+  assert.equal(slides[2].classList.values.has("vpg-fullscreen-active"), true);
+  assert.equal(slides[0].attributes.get("aria-hidden"), "true");
+});
+
+test("fullscreen switcher retains native mobile scrolling", () => {
+  const slides = [slide(0), slide(360)];
+  const calls = [];
+  const switcher = runtime.createFullscreenSwitcher({
+    root: { classList: classList() },
+    track: { classList: classList(), scrollTo(value) { calls.push(value); } },
+    slides,
+    directDesktop: false,
+  });
+  switcher.goTo(1, "smooth");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
 });

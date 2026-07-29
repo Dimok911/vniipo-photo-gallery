@@ -8,10 +8,11 @@ The stable script publishes `window.VniipoPhotoGallery`:
 
 - `version` and `contractVersion`;
 - `bindInlineGalleries(root, options)`;
+- `createFullscreenSwitcher(options)`;
 - `destroyInlineGalleries(root)`;
 - pure gesture helpers under `helpers`.
 
-The current contract is `1`. A gallery uses `[data-photo-gallery]`, a `.vpg-track`, `.vpg-slide` elements, and `[data-vpg-dot]` buttons. Pass `openLightbox({ image, gallery, index })` to retain application-specific full-size/offline photo resolution.
+The current contract is `2`. A gallery uses `[data-photo-gallery]`, a `.vpg-track`, `.vpg-slide` elements, and `[data-vpg-dot]` buttons. Pass `openLightbox({ image, gallery, index })` to retain application-specific full-size/offline photo resolution. Fullscreen viewers use `createFullscreenSwitcher`: desktop slides are replaced instantly, while touch devices retain their native horizontal swipe.
 
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
@@ -27,7 +28,7 @@ const binding = window.VniipoPhotoGallery.bindInlineGalleries(document, {
 binding.destroy();
 ```
 
-Applications keep a bundled copy of the last compatible runtime and request `stable.js` asynchronously. The shared request must never be awaited during boot. On failure or offline startup, the bundled copy remains active. The stable loader uses a one-hour cache window and validates `contractVersion === 1` before using a new runtime.
+Applications keep a bundled copy of the last compatible runtime and request `stable.js` asynchronously. The shared request must never be awaited during boot. On failure or offline startup, the bundled copy remains active. The stable loader uses a one-hour cache window and validates `contractVersion === 2` before using a new runtime.
 
 Since `1.0.1`, a dot-selected target remains active for the whole smooth-scroll
 transition. Intermediate scroll frames cannot briefly reactivate the previous
