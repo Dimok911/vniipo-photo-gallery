@@ -29,6 +29,11 @@ binding.destroy();
 
 Applications keep a bundled copy of the last compatible runtime and request `stable.js` asynchronously. The shared request must never be awaited during boot. On failure or offline startup, the bundled copy remains active. The stable loader uses a one-hour cache window and validates `contractVersion === 1` before using a new runtime.
 
+Since `1.0.1`, a dot-selected target remains active for the whole smooth-scroll
+transition. Intermediate scroll frames cannot briefly reactivate the previous
+dot, while touch or wheel interruption still hands control back to the current
+visible slide.
+
 ## Release and rollback
 
 1. Run `npm test` and `npm run build`.

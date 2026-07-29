@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.0.1";
   const CONTRACT_VERSION = 1;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v1-styles";
@@ -32,6 +32,18 @@
       }
     });
     return index;
+  }
+
+  function resolveNavigationIndex(pendingIndex, measuredIndex, reachedTarget = false) {
+    const measured = Math.max(0, Number(measuredIndex) || 0);
+    if (pendingIndex === null || pendingIndex === undefined) {
+      return { activeIndex: measured, pendingIndex: null };
+    }
+    const pending = Math.max(0, Number(pendingIndex) || 0);
+    return {
+      activeIndex: pending,
+      pendingIndex: reachedTarget ? null : pending,
+    };
   }
 
   function resolveSwipe(startX, startY, endX, endY, threshold) {
@@ -89,6 +101,7 @@
     let slides = [];
     let dots = [];
     let activeIndex = Math.max(0, Number(gallery.dataset.photoInitialIndex) || 0);
+    let pendingScrollIndex = null;
     let scrollFrame = 0;
     let scrollTimer = 0;
     let suppressClickUntil = 0;
@@ -124,6 +137,7 @@
     }
 
     function cancelPendingScroll() {
+      pendingScrollIndex = null;
       if (scrollFrame) {
         cancelAnimationFrame(scrollFrame);
         scrollFrame = 0;
@@ -135,10 +149,15 @@
     }
 
     function syncFromScroll() {
-      cancelPendingScroll();
+      if (scrollFrame) cancelAnimationFrame(scrollFrame);
       scrollFrame = requestAnimationFrame(() => {
         scrollFrame = 0;
-        updateDots(resolveActiveIndex(track, slides));
+        const measuredIndex = resolveActiveIndex(track, slides);
+        const target = pendingScrollIndex === null ? null : slides[pendingScrollIndex];
+        const reachedTarget = Boolean(target) && Math.abs(track.scrollLeft - target.offsetLeft) <= 1;
+        const resolved = resolveNavigationIndex(pendingScrollIndex, measuredIndex, reachedTarget);
+        pendingScrollIndex = resolved.pendingIndex;
+        updateDots(resolved.activeIndex);
       });
     }
 
@@ -147,12 +166,14 @@
       const slide = slides[next];
       if (!slide) return;
       cancelPendingScroll();
+      pendingScrollIndex = behavior === "smooth" ? next : null;
       updateDots(next);
       track.scrollTo({ left: slide.offsetLeft, behavior });
       scrollTimer = setTimeout(() => {
         scrollTimer = 0;
+        pendingScrollIndex = null;
         updateDots(resolveActiveIndex(track, slides));
-      }, behavior === "smooth" ? 360 : 0);
+      }, behavior === "smooth" ? 600 : 0);
     }
 
     function openAt(index, trigger, event) {
@@ -198,6 +219,7 @@
     });
 
     listen(track, "touchstart", (event) => {
+      cancelPendingScroll();
       if (event.touches.length !== 1) {
         touch = null;
         suppressClickUntil = Date.now() + 600;
@@ -331,6 +353,7 @@
     helpers: Object.freeze({
       clamp,
       resolveActiveIndex,
+      resolveNavigationIndex,
       resolveSwipe,
     }),
   });

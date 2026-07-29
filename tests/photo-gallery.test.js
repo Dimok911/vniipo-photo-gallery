@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "1.0.0");
+  assert.equal(runtime.version, "1.0.1");
   assert.equal(runtime.contractVersion, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.destroyInlineGalleries, "function");
@@ -45,4 +45,24 @@ test("shared dots use the Bikepacking 22px strip and 8px marker", () => {
   assert.match(source, /min-height:22px/);
   assert.match(source, /width:8px;height:8px/);
   assert.match(source, /aria-current/);
+});
+
+test("dot target stays active throughout smooth navigation", () => {
+  const { resolveNavigationIndex } = runtime.helpers;
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(resolveNavigationIndex(2, 0, false))),
+    { activeIndex: 2, pendingIndex: 2 },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(resolveNavigationIndex(2, 1, false))),
+    { activeIndex: 2, pendingIndex: 2 },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(resolveNavigationIndex(2, 2, true))),
+    { activeIndex: 2, pendingIndex: null },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(resolveNavigationIndex(null, 1, false))),
+    { activeIndex: 1, pendingIndex: null },
+  );
 });
