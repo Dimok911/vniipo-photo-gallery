@@ -33,6 +33,10 @@ Adapters negotiate this addition with
 their bundled runtime when an older compatible stable alias is temporarily
 cached.
 
+Release `2.1.1` awaits an asynchronous `commitSource` callback. Returning
+`false` (or throwing) prevents adjacent prefetch, so an application can keep a
+post-paint visibility check and rollback without weakening the lifecycle.
+
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
 ```

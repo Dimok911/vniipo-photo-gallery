@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.0";
+  const VERSION = "2.1.1";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -423,7 +423,19 @@
         return { index: activeIndex, src: result.src, success: false };
       }
       if (typeof options.commitSource === "function") {
-        options.commitSource({ entry: entries[activeIndex], index: activeIndex, src: result.src });
+        let committed = false;
+        try {
+          committed = await options.commitSource({
+            entry: entries[activeIndex],
+            index: activeIndex,
+            src: result.src,
+          }) !== false;
+        } catch (error) {
+          reportError(error, "commit", activeIndex, false);
+        }
+        if (!committed || destroyed || generation !== activationGeneration) {
+          return { index: activeIndex, src: result.src, success: false };
+        }
       }
       prefetchAdjacent(activeIndex);
       return { index: activeIndex, src: result.src, success: true };

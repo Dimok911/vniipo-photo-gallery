@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.0");
+  assert.equal(runtime.version, "2.1.1");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
@@ -209,6 +209,38 @@ test("fullscreen source controller does not prefetch after a failed active decod
   await tick();
   assert.equal(result.success, false);
   assert.deepEqual(resolved, [1]);
+  controller.destroy();
+});
+
+test("fullscreen source controller awaits visual commit and skips neighbors when commit fails", async () => {
+  const calls = [];
+  const controller = runtime.createFullscreenSourceController({
+    entries: [{}, {}, {}],
+    initialIndex: 1,
+    resolveFullSource(_entry, index) {
+      calls.push(`resolve:${index}`);
+      return `full:${index}`;
+    },
+    decodeSource({ index }) {
+      calls.push(`decode:${index}`);
+      return true;
+    },
+    async commitSource({ index }) {
+      calls.push(`commit:start:${index}`);
+      await tick();
+      calls.push(`commit:end:${index}`);
+      return false;
+    },
+  });
+  const result = await controller.activate(1);
+  await tick();
+  assert.equal(result.success, false);
+  assert.deepEqual(calls, [
+    "resolve:1",
+    "decode:1",
+    "commit:start:1",
+    "commit:end:1",
+  ]);
   controller.destroy();
 });
 
