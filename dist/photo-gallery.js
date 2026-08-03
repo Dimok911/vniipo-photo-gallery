@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.1";
+  const VERSION = "2.1.2";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -107,6 +107,11 @@
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-track{overflow:hidden!important;scroll-snap-type:none!important;touch-action:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide{display:none!important;flex-basis:100%;scroll-snap-align:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide.vpg-fullscreen-active{display:grid!important;place-items:center}
+.vpg-fullscreen-control,.vpg-fullscreen-close,.vpg-fullscreen-nav{border:1px solid rgba(255,255,255,.5);border-radius:999px;color:#fff;background:rgba(40,44,52,.82);box-shadow:0 2px 10px rgba(0,0,0,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,opacity .14s ease;-webkit-tap-highlight-color:transparent}
+.vpg-fullscreen-control:hover,.vpg-fullscreen-close:hover,.vpg-fullscreen-nav:hover{border-color:rgba(255,255,255,.78);background:rgba(24,27,33,.9);box-shadow:0 3px 14px rgba(0,0,0,.4)}
+.vpg-fullscreen-control:active,.vpg-fullscreen-close:active,.vpg-fullscreen-nav:active{border-color:rgba(255,255,255,.62);background:rgba(12,14,18,.94);box-shadow:0 1px 6px rgba(0,0,0,.38)}
+.vpg-fullscreen-control:focus-visible,.vpg-fullscreen-close:focus-visible,.vpg-fullscreen-nav:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.vpg-fullscreen-control:disabled,.vpg-fullscreen-close:disabled,.vpg-fullscreen-nav:disabled{opacity:.42}
 `;
     doc.head.appendChild(style);
   }
@@ -203,6 +208,173 @@
     return typeof global.AbortController === "function"
       ? new global.AbortController()
       : createFallbackAbortController();
+  }
+
+  function fullscreenAbortError(message = "Fullscreen image replacement was aborted") {
+    const error = new Error(message);
+    error.name = "AbortError";
+    return error;
+  }
+
+  function throwIfFullscreenAborted(signal) {
+    if (signal?.aborted) throw fullscreenAbortError();
+  }
+
+  function normalizeFullscreenImageSource(value, image) {
+    const source = String(value || "");
+    if (!source) return "";
+    const Url = global.URL;
+    if (typeof Url !== "function") return source;
+    try {
+      return new Url(source, image?.ownerDocument?.baseURI || global.document?.baseURI).href;
+    } catch {
+      return source;
+    }
+  }
+
+  function fullscreenImageUsesSource(image, src) {
+    const expected = normalizeFullscreenImageSource(src, image);
+    const actual = normalizeFullscreenImageSource(
+      image?.currentSrc || image?.src || image?.getAttribute?.("src"),
+      image,
+    );
+    return Boolean(expected && actual === expected);
+  }
+
+  async function decodeFullscreenImage(image, { signal } = {}) {
+    throwIfFullscreenAborted(signal);
+    if (typeof image?.decode === "function") await image.decode();
+    throwIfFullscreenAborted(signal);
+    if ("complete" in image && image.complete !== true) {
+      throw new Error("fullscreen-image-not-complete");
+    }
+    if ("naturalWidth" in image && Number(image.naturalWidth) <= 0) {
+      throw new Error("fullscreen-image-decode-empty");
+    }
+    return image;
+  }
+
+  function loadAndDecodeFullscreenImage(image, src, {
+    signal,
+    decode = decodeFullscreenImage,
+  } = {}) {
+    return new Promise((resolve, reject) => {
+      if (!image || !src) {
+        reject(new Error("fullscreen-image-load-missing"));
+        return;
+      }
+      if (signal?.aborted) {
+        reject(fullscreenAbortError());
+        return;
+      }
+      let settled = false;
+      const cleanup = () => {
+        image.removeEventListener?.("load", onLoad);
+        image.removeEventListener?.("error", onError);
+        signal?.removeEventListener?.("abort", onAbort);
+      };
+      const finish = async () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          throwIfFullscreenAborted(signal);
+          await decode(image, { signal });
+          throwIfFullscreenAborted(signal);
+          if (!fullscreenImageUsesSource(image, src)) {
+            throw new Error("fullscreen-image-source-not-selected");
+          }
+          resolve(image);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      const onLoad = () => { void finish(); };
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("fullscreen-image-load-failed"));
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(fullscreenAbortError());
+      };
+      image.addEventListener?.("load", onLoad, { once: true });
+      image.addEventListener?.("error", onError, { once: true });
+      signal?.addEventListener?.("abort", onAbort, { once: true });
+      image.src = String(src);
+      if (image.complete) {
+        if (!("naturalWidth" in image) || Number(image.naturalWidth) > 0) void finish();
+        else onError();
+      }
+    });
+  }
+
+  function afterFullscreenImagePaint() {
+    if (typeof global.requestAnimationFrame !== "function") return Promise.resolve();
+    return new Promise((resolve) => {
+      global.requestAnimationFrame(() => global.requestAnimationFrame(resolve));
+    });
+  }
+
+  async function replaceFullscreenImageSource(currentImage, src, options = {}) {
+    if (!currentImage || !src) throw new Error("fullscreen-image-replacement-missing");
+    const createReplacement = options.createReplacement
+      || ((image) => image.cloneNode(false));
+    const loadAndDecode = options.loadAndDecode || loadAndDecodeFullscreenImage;
+    const decode = options.decode || decodeFullscreenImage;
+    const afterPaint = options.afterPaint || afterFullscreenImagePaint;
+    const shouldCommit = options.shouldCommit || (() => true);
+    const onReplaced = options.onReplaced || (() => {});
+    const onRollback = options.onRollback || (() => {});
+    const signal = options.signal;
+    const replacement = createReplacement(currentImage);
+    if (!replacement || replacement === currentImage) {
+      throw new Error("fullscreen-image-replacement-must-be-detached");
+    }
+    replacement.removeAttribute?.("src");
+    replacement.removeAttribute?.("srcset");
+    replacement.removeAttribute?.("sizes");
+    replacement.removeAttribute?.("loading");
+    replacement.decoding = "async";
+    throwIfFullscreenAborted(signal);
+    await loadAndDecode(replacement, src, { signal, decode });
+    throwIfFullscreenAborted(signal);
+    if (!fullscreenImageUsesSource(replacement, src)) {
+      throw new Error("fullscreen-image-source-not-selected");
+    }
+    if (await shouldCommit({ phase: "before-replace", currentImage, replacement, src, signal }) === false) {
+      throw new Error("fullscreen-image-replacement-superseded");
+    }
+    throwIfFullscreenAborted(signal);
+    currentImage.replaceWith(replacement);
+    try {
+      await onReplaced(replacement, { currentImage, src, signal });
+      await afterPaint({ currentImage, replacement, src, signal });
+      throwIfFullscreenAborted(signal);
+      if (await shouldCommit({ phase: "after-paint", currentImage, replacement, src, signal }) === false) {
+        throw new Error("fullscreen-image-replacement-superseded");
+      }
+      await decode(replacement, { signal });
+      throwIfFullscreenAborted(signal);
+      if (!fullscreenImageUsesSource(replacement, src)) {
+        throw new Error("fullscreen-image-source-not-visible");
+      }
+    } catch (error) {
+      if (replacement.isConnected && !currentImage.isConnected) {
+        replacement.replaceWith(currentImage);
+        try {
+          await onRollback(currentImage, { replacement, src, signal, error });
+        } catch {
+          // Rollback observers cannot hide the original replacement failure.
+        }
+      }
+      throw error;
+    }
+    return replacement;
   }
 
   function normalizeFullscreenSource(value) {
@@ -743,12 +915,20 @@
     version: VERSION,
     contractVersion: CONTRACT_VERSION,
     channel: "stable",
-    capabilities: Object.freeze({ fullscreenSourceLifecycle: 1 }),
+    capabilities: Object.freeze({
+      fullscreenSourceLifecycle: 1,
+      safeFullscreenImageReplace: 1,
+      fullscreenControlStyles: 1,
+    }),
     bindInlineGalleries,
     createFullscreenSourceController,
     createFullscreenSwitcher,
+    decodeFullscreenImage,
     destroyInlineGalleries,
     ensureStyles,
+    fullscreenImageUsesSource,
+    loadAndDecodeFullscreenImage,
+    replaceFullscreenImageSource,
     helpers: Object.freeze({
       clamp,
       isDirectDesktop,

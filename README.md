@@ -1,5 +1,9 @@
 # VNIIPO Photo Gallery
 
+[English](#english) | [Русский](#русский)
+
+## English
+
 Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepacking, WIC, and future applications.
 
 ## Browser contract
@@ -36,6 +40,22 @@ cached.
 Release `2.1.1` awaits an asynchronous `commitSource` callback. Returning
 `false` (or throwing) prevents adjacent prefetch, so an application can keep a
 post-paint visibility check and rollback without weakening the lifecycle.
+
+Release `2.1.2` adds `replaceFullscreenImageSource`,
+`loadAndDecodeFullscreenImage`, `decodeFullscreenImage`, and
+`fullscreenImageUsesSource`. The safe replacement loads and decodes a detached
+image, checks `shouldCommit`, replaces the visible image, waits two animation
+frames, verifies decode and source again, and rolls the exact previous image
+back on failure. Abort, callbacks, and injected browser primitives let
+applications keep lifecycle ownership without duplicating this mechanism.
+Adapters negotiate it with `capabilities.safeFullscreenImageReplace >= 1`.
+The same release publishes application-neutral visual classes
+`.vpg-fullscreen-control`, `.vpg-fullscreen-close`, and
+`.vpg-fullscreen-nav`, negotiated through
+`capabilities.fullscreenControlStyles >= 1`. They share the dark translucent
+surface, border, white foreground, blur fallback, hover/active and keyboard
+focus treatment. Applications still own placement, dimensions, safe areas,
+mobile arrow visibility, and unrelated controls.
 
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
@@ -78,3 +98,38 @@ Rollback only changes the `stable.js` alias and manifest to the preceding immuta
 5. Test vertical page scroll, horizontal swipe, dot navigation, synthetic click suppression, and offline boot.
 
 No external npm or CDN dependency is used.
+
+## Русский
+
+`vniipo-photo-gallery` — общий браузерный runtime фотогалерей для OVIK,
+Bikepacking, WIC и следующих приложений ВНИИПО. Текущий контракт `2` сохраняет
+прикладные API, авторизацию, IndexedDB и схему данных в адаптерах приложений.
+
+Runtime унифицирует встроенную ленту, точки навигации, горизонтальные свайпы,
+полноэкранное переключение и инерцию увеличенного изображения. Миниатюры
+показываются целиком через `object-fit: contain`; крайний и прерванный свайп
+точно доводится до реального слайда.
+
+`createFullscreenSourceController` обеспечивает общий жизненный цикл
+preview/original: активный проверенный оригинал может стать начальным `src`,
+декодируется только активное фото, а соседние загружаются лишь после его
+успешного decode. Повторная работа устраняется, устаревшие операции отменяются,
+а временные источники освобождаются один раз.
+
+Начиная с `2.1.2`, `replaceFullscreenImageSource` безопасно загружает и
+декодирует отдельный `<img>`, проверяет актуальность операции, подменяет видимое
+изображение, ждёт два кадра отрисовки и повторно проверяет decode и фактический
+source. При ошибке предыдущий элемент точно возвращается. Возможность
+определяется через `capabilities.safeFullscreenImageReplace >= 1`.
+
+Классы `.vpg-fullscreen-control`, `.vpg-fullscreen-close` и
+`.vpg-fullscreen-nav` задают единое визуальное оформление кнопок закрытия и
+стрелок: тёмную полупрозрачную подложку, контрастную рамку, белый знак, blur с
+безопасным фоном, состояния hover/active и заметный `focus-visible`. Приложение
+по-прежнему отвечает за расположение, размеры, safe-area и скрытие стрелок на
+мобильных устройствах. Возможность определяется через
+`capabilities.fullscreenControlStyles >= 1`.
+
+Приложение хранит совместимый fallback и загружает `stable.js` асинхронно, не
+задерживая старт. Перед релизом выполняются `npm test` и `npm run build`, затем
+сверяется SHA-256 из `dist/manifest.json`.

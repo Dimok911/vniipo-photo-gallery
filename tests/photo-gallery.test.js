@@ -14,13 +14,19 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.1");
+  assert.equal(runtime.version, "2.1.2");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
+  assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
+  assert.equal(runtime.capabilities.fullscreenControlStyles, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
+  assert.equal(typeof runtime.decodeFullscreenImage, "function");
   assert.equal(typeof runtime.destroyInlineGalleries, "function");
+  assert.equal(typeof runtime.fullscreenImageUsesSource, "function");
+  assert.equal(typeof runtime.loadAndDecodeFullscreenImage, "function");
+  assert.equal(typeof runtime.replaceFullscreenImageSource, "function");
 });
 
 test("gesture helper distinguishes tap, horizontal swipe, and vertical page scroll", () => {
@@ -68,6 +74,18 @@ test("dot target stays active throughout smooth navigation", () => {
     JSON.parse(JSON.stringify(resolveNavigationIndex(null, 1, false))),
     { activeIndex: 1, pendingIndex: null },
   );
+});
+
+test("fullscreen close and navigation controls share one application-neutral visual contract", () => {
+  assert.match(source, /\.vpg-fullscreen-control,\.vpg-fullscreen-close,\.vpg-fullscreen-nav\{/);
+  assert.match(source, /background:rgba\(40,44,52,\.82\)/);
+  assert.match(source, /border:1px solid rgba\(255,255,255,\.5\)/);
+  assert.match(source, /color:#fff/);
+  assert.match(source, /-webkit-backdrop-filter:blur\(8px\);backdrop-filter:blur\(8px\)/);
+  assert.match(source, /\.vpg-fullscreen-nav:hover/);
+  assert.match(source, /\.vpg-fullscreen-close:active/);
+  assert.match(source, /\.vpg-fullscreen-control:focus-visible/);
+  assert.doesNotMatch(source, /\.vpg-fullscreen-control[^}]*position:/);
 });
 
 test("2.0.1 exposes bounded inertia and contains thumbnail images", () => {
@@ -146,6 +164,102 @@ test("fullscreen switcher retains native mobile scrolling", () => {
   });
   switcher.goTo(1, "smooth");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
+});
+
+test("safe fullscreen replacement commits only a decoded matching source after paint", async () => {
+  const calls = [];
+  const currentImage = {
+    isConnected: true,
+    replaceWith(replacement) {
+      calls.push("replace");
+      this.isConnected = false;
+      replacement.isConnected = true;
+    },
+  };
+  const replacement = {
+    src: "",
+    currentSrc: "",
+    complete: true,
+    naturalWidth: 2400,
+    isConnected: false,
+    removeAttribute() {},
+    async decode() { calls.push("visible-decode"); },
+  };
+  const result = await runtime.replaceFullscreenImageSource(currentImage, "blob:full", {
+    createReplacement: () => replacement,
+    async loadAndDecode(image, src) {
+      image.src = src;
+      image.currentSrc = src;
+      calls.push("candidate-decode");
+    },
+    async afterPaint() { calls.push("two-frames"); },
+    shouldCommit({ phase }) {
+      calls.push(`check:${phase}`);
+      return true;
+    },
+    onReplaced() { calls.push("committed"); },
+  });
+  assert.equal(result, replacement);
+  assert.deepEqual(calls, [
+    "candidate-decode",
+    "check:before-replace",
+    "replace",
+    "committed",
+    "two-frames",
+    "check:after-paint",
+    "visible-decode",
+  ]);
+  assert.equal(runtime.fullscreenImageUsesSource(replacement, "blob:full"), true);
+});
+
+test("safe fullscreen replacement rolls the exact image back after a post-paint failure", async () => {
+  const calls = [];
+  const currentImage = {
+    isConnected: true,
+    replaceWith(replacement) {
+      this.isConnected = false;
+      replacement.isConnected = true;
+    },
+  };
+  const replacement = {
+    src: "",
+    currentSrc: "",
+    complete: true,
+    naturalWidth: 2400,
+    isConnected: false,
+    removeAttribute() {},
+    replaceWith(restored) {
+      calls.push("rollback");
+      this.isConnected = false;
+      restored.isConnected = true;
+    },
+    async decode() {},
+  };
+  await assert.rejects(runtime.replaceFullscreenImageSource(currentImage, "blob:full", {
+    createReplacement: () => replacement,
+    async loadAndDecode(image, src) {
+      image.src = src;
+      image.currentSrc = src;
+    },
+    async afterPaint() { replacement.currentSrc = "blob:wrong"; },
+    onRollback() { calls.push("notified"); },
+  }), /source-not-visible/);
+  assert.deepEqual(calls, ["rollback", "notified"]);
+  assert.equal(currentImage.isConnected, true);
+  assert.equal(replacement.isConnected, false);
+});
+
+test("safe fullscreen replacement honors abort before touching the visible image", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let replaced = false;
+  await assert.rejects(runtime.replaceFullscreenImageSource({
+    replaceWith() { replaced = true; },
+  }, "blob:full", {
+    signal: controller.signal,
+    createReplacement: () => ({ removeAttribute() {} }),
+  }), { name: "AbortError" });
+  assert.equal(replaced, false);
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
