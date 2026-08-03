@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.0.0");
+  assert.equal(runtime.version, "2.0.1");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
@@ -66,6 +66,27 @@ test("dot target stays active throughout smooth navigation", () => {
     JSON.parse(JSON.stringify(resolveNavigationIndex(null, 1, false))),
     { activeIndex: 1, pendingIndex: null },
   );
+});
+
+test("2.0.1 exposes bounded inertia and contains thumbnail images", () => {
+  const next = runtime.helpers.stepInertia({
+    x: 10,
+    y: -5,
+    velocityX: 1,
+    velocityY: -0.5,
+    elapsedMs: 16,
+  });
+  assert.equal(next.x, 26);
+  assert.equal(next.y, -13);
+  assert.ok(next.velocityX > 0 && next.velocityX < 1);
+  assert.ok(next.velocityY < 0 && next.velocityY > -0.5);
+  assert.match(source, /object-fit:contain/);
+  assert.match(source, /overscroll-behavior-x:none/);
+});
+
+test("2.0.1 settles moved and cancelled touch gestures on a real slide", () => {
+  assert.match(source, /if \(gesture\.moved\) \{[\s\S]{0,160}scrollToIndex\(resolveActiveIndex\(track, slides\)\)/);
+  assert.match(source, /listen\(track, "touchcancel"[\s\S]{0,180}scrollToIndex\(resolveActiveIndex\(track, slides\)\)/);
 });
 
 const classList = () => {

@@ -14,6 +14,10 @@ The stable script publishes `window.VniipoPhotoGallery`:
 
 The current contract is `2`. A gallery uses `[data-photo-gallery]`, a `.vpg-track`, `.vpg-slide` elements, and `[data-vpg-dot]` buttons. Pass `openLightbox({ image, gallery, index })` to retain application-specific full-size/offline photo resolution. Fullscreen viewers use `createFullscreenSwitcher`: desktop slides are replaced instantly, while touch devices retain their native horizontal swipe.
 
+Release `2.0.1` keeps inline images contained without cropping, settles the
+track after edge or interrupted swipes, and exposes `helpers.stepInertia` for
+application fullscreen viewers. These additions preserve contract `2`.
+
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
 ```

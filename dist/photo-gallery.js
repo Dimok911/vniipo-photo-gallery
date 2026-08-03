@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.0.0";
+  const VERSION = "2.0.1";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -71,17 +71,35 @@
     };
   }
 
+  function stepInertia({
+    x = 0,
+    y = 0,
+    velocityX = 0,
+    velocityY = 0,
+    elapsedMs = 16,
+    friction = 0.0075,
+  } = {}) {
+    const elapsed = clamp(Number(elapsedMs) || 16, 1, 32);
+    const damping = Math.exp(-Math.max(0, Number(friction) || 0) * elapsed);
+    return {
+      x: (Number(x) || 0) + (Number(velocityX) || 0) * elapsed,
+      y: (Number(y) || 0) + (Number(velocityY) || 0) * elapsed,
+      velocityX: (Number(velocityX) || 0) * damping,
+      velocityY: (Number(velocityY) || 0) * damping,
+    };
+  }
+
   function ensureStyles(doc) {
     if (!doc?.createElement || !doc?.head || doc.getElementById?.(styleId)) return;
     const style = doc.createElement("style");
     style.id = styleId;
     style.textContent = `
 .vpg-gallery{position:relative;overflow:hidden}
-.vpg-track{position:relative;z-index:1;display:flex;width:100%;height:100%;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.vpg-track{position:relative;z-index:1;display:flex;width:100%;height:100%;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:none;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
 .vpg-gallery.vpg-has-dots .vpg-track{height:calc(100% - 22px)}
 .vpg-track::-webkit-scrollbar{display:none}
 .vpg-slide{position:relative;display:block;flex:0 0 100%;width:100%;height:100%;min-width:0;padding:0;border:0;background:transparent;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden;cursor:zoom-in}
-.vpg-slide>img,.vpg-slide img{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;-webkit-user-drag:none}
+.vpg-slide>img,.vpg-slide img{display:block;width:100%;height:100%;object-fit:contain;background:var(--vpg-image-background,#fff);pointer-events:none;user-select:none;-webkit-user-drag:none}
 .vpg-dots{position:absolute;left:50%;bottom:0;z-index:10;display:flex;align-items:center;gap:0;min-height:22px;transform:translate3d(-50%,0,0);padding:0 6px;border-radius:999px;background:rgba(255,255,255,.96);box-shadow:0 1px 6px rgba(15,23,42,.18)}
 .vpg-dot{display:inline-grid;place-items:center;flex:0 0 12px;width:12px;height:22px;min-width:0;min-height:0;margin:0;padding:0;border:0;background:transparent;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .vpg-dot-mark{display:block;width:8px;height:8px;border:1px solid var(--vpg-accent,#667327);border-radius:50%;background:transparent;transition:background-color .15s ease,border-color .15s ease}
@@ -335,12 +353,16 @@
         openAt(ended.slideIndex, "tap", event);
         return;
       }
-      if (gesture.moved) suppressClickUntil = Date.now() + 600;
+      if (gesture.moved) {
+        suppressClickUntil = Date.now() + 600;
+        scrollToIndex(resolveActiveIndex(track, slides));
+      }
     }, { passive: false });
 
     listen(track, "touchcancel", () => {
       touch = null;
       suppressClickUntil = Date.now() + 300;
+      scrollToIndex(resolveActiveIndex(track, slides));
     }, { passive: true });
 
     dots.forEach((dot) => {
@@ -429,6 +451,7 @@
       resolveActiveIndex,
       resolveNavigationIndex,
       resolveSwipe,
+      stepInertia,
     }),
   });
 
