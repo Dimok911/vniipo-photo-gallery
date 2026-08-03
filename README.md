@@ -58,6 +58,10 @@ button: a 10px radius, `rgba(255,255,255,.28)` border,
 coordinated hover/active/keyboard-focus treatment. Applications still own placement, dimensions, safe areas,
 mobile arrow visibility, and unrelated controls.
 
+Release `2.1.4` injects this control contract through its own idempotent style
+block whenever a fullscreen switcher is created. A temporarily cached 2.0.1
+base style therefore cannot suppress newer fullscreen controls.
+
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
 ```
@@ -131,6 +135,10 @@ source. При ошибке предыдущий элемент точно во�
 по-прежнему отвечает за расположение, размеры, safe-area и скрытие стрелок на
 мобильных устройствах. Возможность определяется через
 `capabilities.fullscreenControlStyles >= 1`.
+
+В `2.1.4` оформление контролов вынесено в отдельный идемпотентный style-блок,
+который подключается при создании fullscreen switcher. Поэтому временно
+закэшированный базовый стиль 2.0.1 больше не может скрыть новые контролы.
 
 Приложение хранит совместимый fallback и загружает `stable.js` асинхронно, не
 задерживая старт. Перед релизом выполняются `npm test` и `npm run build`, затем

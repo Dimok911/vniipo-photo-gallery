@@ -1,10 +1,11 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.3";
+  const VERSION = "2.1.4";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
+  const fullscreenControlStyleId = "vniipo-photo-gallery-v2-fullscreen-controls";
 
   const defaults = Object.freeze({
     gallery: "[data-photo-gallery]",
@@ -107,6 +108,15 @@
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-track{overflow:hidden!important;scroll-snap-type:none!important;touch-action:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide{display:none!important;flex-basis:100%;scroll-snap-align:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide.vpg-fullscreen-active{display:grid!important;place-items:center}
+`;
+    doc.head.appendChild(style);
+  }
+
+  function ensureFullscreenControlStyles(doc) {
+    if (!doc?.createElement || !doc?.head || doc.getElementById?.(fullscreenControlStyleId)) return;
+    const style = doc.createElement("style");
+    style.id = fullscreenControlStyleId;
+    style.textContent = `
 .vpg-fullscreen-control,.vpg-fullscreen-close,.vpg-fullscreen-nav{border:1px solid rgba(255,255,255,.28);border-radius:10px;color:#fff;background:rgba(8,15,13,.62);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .14s ease,border-color .14s ease,opacity .14s ease;-webkit-tap-highlight-color:transparent}
 .vpg-fullscreen-control:hover,.vpg-fullscreen-close:hover,.vpg-fullscreen-nav:hover{border-color:rgba(255,255,255,.44);background:rgba(8,15,13,.78)}
 .vpg-fullscreen-control:active,.vpg-fullscreen-close:active,.vpg-fullscreen-nav:active{border-color:rgba(255,255,255,.36);background:rgba(8,15,13,.88)}
@@ -128,7 +138,9 @@
     let activeIndex = clamp(options.initialIndex, 0, Math.max(0, slides.length - 1));
     let destroyed = false;
 
-    ensureStyles(root?.ownerDocument || track?.ownerDocument || global.document);
+    const doc = root?.ownerDocument || track?.ownerDocument || global.document;
+    ensureStyles(doc);
+    ensureFullscreenControlStyles(doc);
     root?.classList?.add("vpg-fullscreen");
     root?.classList?.toggle("vpg-direct-desktop", directDesktop);
     track?.classList?.add("vpg-fullscreen-track");
@@ -925,6 +937,7 @@
     createFullscreenSwitcher,
     decodeFullscreenImage,
     destroyInlineGalleries,
+    ensureFullscreenControlStyles,
     ensureStyles,
     fullscreenImageUsesSource,
     loadAndDecodeFullscreenImage,

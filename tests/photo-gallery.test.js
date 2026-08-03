@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.3");
+  assert.equal(runtime.version, "2.1.4");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
@@ -24,6 +24,7 @@ test("publishes a stable contract and reusable API", () => {
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
   assert.equal(typeof runtime.decodeFullscreenImage, "function");
   assert.equal(typeof runtime.destroyInlineGalleries, "function");
+  assert.equal(typeof runtime.ensureFullscreenControlStyles, "function");
   assert.equal(typeof runtime.fullscreenImageUsesSource, "function");
   assert.equal(typeof runtime.loadAndDecodeFullscreenImage, "function");
   assert.equal(typeof runtime.replaceFullscreenImageSource, "function");
@@ -88,6 +89,30 @@ test("fullscreen close and navigation controls share one application-neutral vis
   assert.match(source, /\.vpg-fullscreen-control:focus-visible/);
   assert.match(source, /outline:2px solid rgba\(255,255,255,\.9\);outline-offset:2px/);
   assert.doesNotMatch(source, /\.vpg-fullscreen-control[^}]*position:/);
+});
+
+test("fullscreen controls are injected once when a cached 2.0.1 base style already exists", () => {
+  const styles = new Map([["vniipo-photo-gallery-v2-styles", { id: "vniipo-photo-gallery-v2-styles" }]]);
+  const appended = [];
+  const doc = {
+    createElement: () => ({ id: "", textContent: "" }),
+    getElementById: (id) => styles.get(id) || null,
+    head: {
+      appendChild(style) {
+        appended.push(style);
+        styles.set(style.id, style);
+      },
+    },
+  };
+  const root = { ownerDocument: doc, classList: classList() };
+  const track = { ownerDocument: doc, classList: classList(), scrollTo() {} };
+
+  runtime.createFullscreenSwitcher({ root, track, slides: [], directDesktop: true });
+  runtime.createFullscreenSwitcher({ root, track, slides: [], directDesktop: true });
+
+  assert.equal(appended.length, 1);
+  assert.equal(appended[0].id, "vniipo-photo-gallery-v2-fullscreen-controls");
+  assert.match(appended[0].textContent, /\.vpg-fullscreen-control/);
 });
 
 test("2.0.1 exposes bounded inertia and contains thumbnail images", () => {
