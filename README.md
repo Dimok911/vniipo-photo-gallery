@@ -6,8 +6,9 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 The stable script publishes `window.VniipoPhotoGallery`:
 
-- `version` and `contractVersion`;
+- `version`, `contractVersion`, and additive `capabilities`;
 - `bindInlineGalleries(root, options)`;
+- `createFullscreenSourceController(options)`;
 - `createFullscreenSwitcher(options)`;
 - `destroyInlineGalleries(root)`;
 - pure gesture helpers under `helpers`.
@@ -17,6 +18,20 @@ The current contract is `2`. A gallery uses `[data-photo-gallery]`, a `.vpg-trac
 Release `2.0.1` keeps inline images contained without cropping, settles the
 track after edge or interrupted swipes, and exposes `helpers.stepInertia` for
 application fullscreen viewers. These additions preserve contract `2`.
+
+Release `2.1.0` adds an application-neutral fullscreen source lifecycle while
+preserving contract `2`. `createFullscreenSourceController` accepts preview,
+verified-full, resolver, decoder, commit, and dispose callbacks. The selected
+photo can therefore start directly from a verified local original; only its
+original is decoded first, and adjacent originals are resolved and decoded
+only after that active decode returns `true`. Repeated resolution/decode is
+deduplicated, obsolete work is abortable, and disposable sources are released
+exactly once. Storage, API, authentication, and application schemas remain in
+the application adapter.
+Adapters negotiate this addition with
+`capabilities.fullscreenSourceLifecycle >= 1` (or the method presence) and keep
+their bundled runtime when an older compatible stable alias is temporarily
+cached.
 
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>

@@ -14,9 +14,11 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.0.1");
+  assert.equal(runtime.version, "2.1.0");
   assert.equal(runtime.contractVersion, 2);
+  assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
+  assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
   assert.equal(typeof runtime.destroyInlineGalleries, "function");
 });
@@ -144,4 +146,133 @@ test("fullscreen switcher retains native mobile scrolling", () => {
   });
   switcher.goTo(1, "smooth");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
+});
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("fullscreen source controller starts selected photo from verified full and leaves others on preview", () => {
+  const entries = [0, 1, 2].map((index) => ({
+    previewSrc: `preview:${index}`,
+    verifiedFullSrc: `full:${index}`,
+  }));
+  const controller = runtime.createFullscreenSourceController({ entries, initialIndex: 1 });
+  assert.equal(controller.initialSource(0), "preview:0");
+  assert.equal(controller.initialSource(1), "full:1");
+  assert.equal(controller.initialSource(2), "preview:2");
+  controller.destroy();
+});
+
+test("fullscreen source controller decodes active first and prefetches neighbors only after success", async () => {
+  const calls = [];
+  const entries = [0, 1, 2].map((index) => ({ index, previewSrc: `preview:${index}` }));
+  const controller = runtime.createFullscreenSourceController({
+    entries,
+    initialIndex: 1,
+    resolveFullSource(entry, index, { prefetch }) {
+      calls.push(`resolve:${index}:${prefetch}`);
+      return `full:${index}`;
+    },
+    async decodeSource({ index, prefetch }) {
+      calls.push(`decode:${index}:${prefetch}`);
+      return true;
+    },
+    commitSource({ index, src }) {
+      calls.push(`commit:${index}:${src}`);
+    },
+  });
+
+  const result = await controller.activate(1);
+  await tick();
+  assert.equal(result.success, true);
+  assert.deepEqual(calls.slice(0, 3), [
+    "resolve:1:false",
+    "decode:1:false",
+    "commit:1:full:1",
+  ]);
+  assert.ok(calls.indexOf("resolve:0:true") > calls.indexOf("decode:1:false"));
+  assert.ok(calls.indexOf("resolve:2:true") > calls.indexOf("decode:1:false"));
+  controller.destroy();
+});
+
+test("fullscreen source controller does not prefetch after a failed active decode", async () => {
+  const resolved = [];
+  const controller = runtime.createFullscreenSourceController({
+    entries: [{}, {}, {}],
+    initialIndex: 1,
+    resolveFullSource(_entry, index) {
+      resolved.push(index);
+      return `full:${index}`;
+    },
+    decodeSource() { return false; },
+  });
+  const result = await controller.activate(1);
+  await tick();
+  assert.equal(result.success, false);
+  assert.deepEqual(resolved, [1]);
+  controller.destroy();
+});
+
+test("fullscreen source controller deduplicates repeated resolve and decode", async () => {
+  let resolves = 0;
+  let decodes = 0;
+  let commits = 0;
+  const controller = runtime.createFullscreenSourceController({
+    entries: [{}],
+    resolveFullSource() {
+      resolves += 1;
+      return "full:0";
+    },
+    async decodeSource() {
+      decodes += 1;
+      await tick();
+      return true;
+    },
+    commitSource() { commits += 1; },
+  });
+  const results = await Promise.all([controller.activate(0), controller.activate(0)]);
+  assert.equal(resolves, 1);
+  assert.equal(decodes, 1);
+  assert.equal(commits, 1);
+  assert.equal(results.filter((result) => result.success).length, 1);
+  controller.destroy();
+});
+
+test("fullscreen source controller aborts obsolete work and disposes resolved sources once", async () => {
+  let resolveFull;
+  let signal;
+  let disposals = 0;
+  const pending = new Promise((resolve) => { resolveFull = resolve; });
+  const controller = runtime.createFullscreenSourceController({
+    entries: [{}],
+    resolveFullSource(_entry, _index, context) {
+      signal = context.signal;
+      return pending;
+    },
+    decodeSource() { return true; },
+  });
+  const activation = controller.activate(0);
+  await tick();
+  controller.cancel(0);
+  assert.equal(signal.aborted, true);
+  resolveFull({ src: "blob:full", dispose() { disposals += 1; } });
+  const result = await activation;
+  assert.equal(result.success, false);
+  assert.equal(disposals, 1);
+  controller.destroy();
+  assert.equal(disposals, 1);
+});
+
+test("fullscreen source controller releases retained disposable sources on destroy", async () => {
+  let disposals = 0;
+  const controller = runtime.createFullscreenSourceController({
+    entries: [{}],
+    resolveFullSource() {
+      return { src: "blob:retained", dispose() { disposals += 1; } };
+    },
+    decodeSource() { return true; },
+  });
+  assert.equal((await controller.activate(0)).success, true);
+  controller.destroy();
+  controller.destroy();
+  assert.equal(disposals, 1);
 });

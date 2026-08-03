@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.0.1";
+  const VERSION = "2.1.0";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -173,6 +173,296 @@
       get activeIndex() { return activeIndex; },
       goTo,
       render,
+      destroy,
+    };
+  }
+
+  function createFallbackAbortController() {
+    let aborted = false;
+    const listeners = new Set();
+    return {
+      signal: {
+        get aborted() { return aborted; },
+        addEventListener(type, listener) {
+          if (type === "abort" && typeof listener === "function") listeners.add(listener);
+        },
+        removeEventListener(type, listener) {
+          if (type === "abort") listeners.delete(listener);
+        },
+      },
+      abort() {
+        if (aborted) return;
+        aborted = true;
+        listeners.forEach((listener) => listener());
+        listeners.clear();
+      },
+    };
+  }
+
+  function createAbortController() {
+    return typeof global.AbortController === "function"
+      ? new global.AbortController()
+      : createFallbackAbortController();
+  }
+
+  function normalizeFullscreenSource(value) {
+    if (typeof value === "string") return value ? { src: value, dispose: null } : null;
+    if (!value || typeof value !== "object" || !value.src) return null;
+    return {
+      src: String(value.src),
+      dispose: typeof value.dispose === "function" ? value.dispose : null,
+    };
+  }
+
+  function createFullscreenSourceController(options = {}) {
+    let entries = Array.from(options.entries || []);
+    let activeIndex = clamp(options.initialIndex, 0, Math.max(0, entries.length - 1));
+    let activationGeneration = 0;
+    let destroyed = false;
+    const verifiedSources = new Map();
+    const resolvedSources = new Map();
+    const resolutionPromises = new Map();
+    const decodePromises = new Map();
+    const decodedSources = new Set();
+    const pendingControllers = new Map();
+    const disposers = new Map();
+
+    const sourceKey = (index, src) => `${index}\u0000${src}`;
+
+    function reportError(error, phase, index, prefetch = false) {
+      if (error?.name === "AbortError") return;
+      if (typeof options.onError === "function") {
+        options.onError(error, { phase, index, entry: entries[index], prefetch });
+      }
+    }
+
+    function rememberSource(index, result) {
+      if (!result?.src || !result.dispose) return result;
+      const key = sourceKey(index, result.src);
+      if (!disposers.has(key)) {
+        let disposed = false;
+        disposers.set(key, () => {
+          if (disposed) return;
+          disposed = true;
+          result.dispose();
+        });
+      }
+      return result;
+    }
+
+    function disposeSource(index, result) {
+      if (!result?.src || !result.dispose) return;
+      const key = sourceKey(index, result.src);
+      const dispose = disposers.get(key);
+      if (dispose) {
+        disposers.delete(key);
+        dispose();
+      } else {
+        result.dispose();
+      }
+    }
+
+    function readPreview(index) {
+      if (index < 0 || index >= entries.length) return "";
+      const value = typeof options.getPreviewSource === "function"
+        ? options.getPreviewSource(entries[index], index)
+        : entries[index]?.previewSrc;
+      return typeof value === "string" ? value : value?.src || "";
+    }
+
+    function readVerifiedFull(index) {
+      if (verifiedSources.has(index)) return verifiedSources.get(index);
+      if (index < 0 || index >= entries.length) return null;
+      const value = typeof options.getVerifiedFullSource === "function"
+        ? options.getVerifiedFullSource(entries[index], index)
+        : entries[index]?.verifiedFullSrc;
+      if (value && typeof value.then === "function") return null;
+      const result = rememberSource(index, normalizeFullscreenSource(value));
+      if (result) verifiedSources.set(index, result);
+      return result;
+    }
+
+    function initialSource(index = activeIndex) {
+      const normalizedIndex = clamp(index, 0, Math.max(0, entries.length - 1));
+      if (normalizedIndex === activeIndex) {
+        const resolved = resolvedSources.get(normalizedIndex);
+        if (resolved && decodedSources.has(sourceKey(normalizedIndex, resolved.src))) return resolved.src;
+        const verified = readVerifiedFull(normalizedIndex);
+        if (verified) return verified.src;
+      }
+      return readPreview(normalizedIndex);
+    }
+
+    async function resolveFull(index, prefetch) {
+      const verified = readVerifiedFull(index);
+      if (verified) return verified;
+      if (resolvedSources.has(index)) return resolvedSources.get(index);
+      if (resolutionPromises.has(index)) return resolutionPromises.get(index);
+      if (typeof options.resolveFullSource !== "function") return null;
+
+      const controller = createAbortController();
+      const pendingKey = `resolve:${index}`;
+      const pending = { index, controller };
+      pendingControllers.set(pendingKey, pending);
+      const promise = Promise.resolve().then(() => options.resolveFullSource(entries[index], index, {
+        signal: controller.signal,
+        prefetch,
+      })).then((value) => {
+        const result = rememberSource(index, normalizeFullscreenSource(value));
+        if (controller.signal.aborted) {
+          disposeSource(index, result);
+          return null;
+        }
+        if (result) resolvedSources.set(index, result);
+        return result;
+      }).catch((error) => {
+        reportError(error, "resolve", index, prefetch);
+        return null;
+      }).finally(() => {
+        if (resolutionPromises.get(index) === promise) resolutionPromises.delete(index);
+        if (pendingControllers.get(pendingKey) === pending) pendingControllers.delete(pendingKey);
+      });
+      resolutionPromises.set(index, promise);
+      return promise;
+    }
+
+    async function decodeFull(index, result, prefetch) {
+      if (!result?.src) return false;
+      const key = sourceKey(index, result.src);
+      if (decodedSources.has(key)) return true;
+      if (decodePromises.has(key)) return decodePromises.get(key);
+      if (typeof options.decodeSource !== "function") {
+        decodedSources.add(key);
+        return true;
+      }
+
+      const controller = createAbortController();
+      const pendingKey = `decode:${key}`;
+      const pending = { index, controller };
+      pendingControllers.set(pendingKey, pending);
+      const promise = Promise.resolve().then(() => options.decodeSource({
+        entry: entries[index],
+        index,
+        src: result.src,
+        signal: controller.signal,
+        prefetch,
+      })).then((success) => {
+        const decoded = success === true && !controller.signal.aborted;
+        if (decoded) decodedSources.add(key);
+        return decoded;
+      }).catch((error) => {
+        reportError(error, "decode", index, prefetch);
+        return false;
+      }).finally(() => {
+        if (decodePromises.get(key) === promise) decodePromises.delete(key);
+        if (pendingControllers.get(pendingKey) === pending) pendingControllers.delete(pendingKey);
+      });
+      decodePromises.set(key, promise);
+      return promise;
+    }
+
+    async function prefetch(index) {
+      if (destroyed || index < 0 || index >= entries.length) return false;
+      const result = await resolveFull(index, true);
+      if (destroyed || !result) return false;
+      return decodeFull(index, result, true);
+    }
+
+    function prefetchAdjacent(index) {
+      if (options.prefetchAdjacent === false) return;
+      [index - 1, index + 1].forEach((candidate) => {
+        if (candidate >= 0 && candidate < entries.length) void prefetch(candidate);
+      });
+    }
+
+    function cancelPending(index = null) {
+      activationGeneration += 1;
+      pendingControllers.forEach(({ index: pendingIndex, controller }, key) => {
+        if (index === null || pendingIndex === index) {
+          controller.abort();
+          pendingControllers.delete(key);
+        }
+      });
+      resolutionPromises.forEach((_promise, pendingIndex) => {
+        if (index === null || pendingIndex === index) resolutionPromises.delete(pendingIndex);
+      });
+      decodePromises.forEach((_promise, key) => {
+        const pendingIndex = Number(key.slice(0, key.indexOf("\u0000")));
+        if (index === null || pendingIndex === index) decodePromises.delete(key);
+      });
+    }
+
+    function cancelPendingExcept(index) {
+      pendingControllers.forEach(({ index: pendingIndex, controller }, key) => {
+        if (pendingIndex !== index) {
+          controller.abort();
+          pendingControllers.delete(key);
+        }
+      });
+      resolutionPromises.forEach((_promise, pendingIndex) => {
+        if (pendingIndex !== index) resolutionPromises.delete(pendingIndex);
+      });
+      decodePromises.forEach((_promise, key) => {
+        const pendingIndex = Number(key.slice(0, key.indexOf("\u0000")));
+        if (pendingIndex !== index) decodePromises.delete(key);
+      });
+    }
+
+    async function activate(index) {
+      if (destroyed || !entries.length) return { index: 0, src: "", success: false };
+      activeIndex = clamp(index, 0, entries.length - 1);
+      const activatedIndex = activeIndex;
+      const generation = ++activationGeneration;
+      cancelPendingExcept(activeIndex);
+      const result = await resolveFull(activeIndex, false);
+      if (destroyed || generation !== activationGeneration || !result) {
+        return { index: activeIndex, src: result?.src || "", success: false };
+      }
+      const success = await decodeFull(activeIndex, result, false);
+      if (destroyed || generation !== activationGeneration || activeIndex !== activatedIndex || !success) {
+        return { index: activeIndex, src: result.src, success: false };
+      }
+      if (typeof options.commitSource === "function") {
+        options.commitSource({ entry: entries[activeIndex], index: activeIndex, src: result.src });
+      }
+      prefetchAdjacent(activeIndex);
+      return { index: activeIndex, src: result.src, success: true };
+    }
+
+    function replaceEntries(nextEntries, nextIndex = 0) {
+      cancelPending();
+      disposers.forEach((dispose) => dispose());
+      disposers.clear();
+      verifiedSources.clear();
+      resolvedSources.clear();
+      resolutionPromises.clear();
+      decodePromises.clear();
+      decodedSources.clear();
+      entries = Array.from(nextEntries || []);
+      activeIndex = clamp(nextIndex, 0, Math.max(0, entries.length - 1));
+      return activeIndex;
+    }
+
+    function destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      cancelPending();
+      disposers.forEach((dispose) => dispose());
+      disposers.clear();
+      verifiedSources.clear();
+      resolvedSources.clear();
+      resolutionPromises.clear();
+      decodePromises.clear();
+      decodedSources.clear();
+    }
+
+    return {
+      get activeIndex() { return activeIndex; },
+      initialSource,
+      activate,
+      prefetch,
+      cancel: cancelPending,
+      replaceEntries,
       destroy,
     };
   }
@@ -441,7 +731,9 @@
     version: VERSION,
     contractVersion: CONTRACT_VERSION,
     channel: "stable",
+    capabilities: Object.freeze({ fullscreenSourceLifecycle: 1 }),
     bindInlineGalleries,
+    createFullscreenSourceController,
     createFullscreenSwitcher,
     destroyInlineGalleries,
     ensureStyles,
