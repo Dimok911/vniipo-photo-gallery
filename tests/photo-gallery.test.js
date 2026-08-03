@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.2");
+  assert.equal(runtime.version, "2.1.3");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
@@ -78,13 +78,15 @@ test("dot target stays active throughout smooth navigation", () => {
 
 test("fullscreen close and navigation controls share one application-neutral visual contract", () => {
   assert.match(source, /\.vpg-fullscreen-control,\.vpg-fullscreen-close,\.vpg-fullscreen-nav\{/);
-  assert.match(source, /background:rgba\(40,44,52,\.82\)/);
-  assert.match(source, /border:1px solid rgba\(255,255,255,\.5\)/);
+  assert.match(source, /background:rgba\(8,15,13,\.62\)/);
+  assert.match(source, /border:1px solid rgba\(255,255,255,\.28\)/);
+  assert.match(source, /border-radius:10px/);
   assert.match(source, /color:#fff/);
   assert.match(source, /-webkit-backdrop-filter:blur\(8px\);backdrop-filter:blur\(8px\)/);
   assert.match(source, /\.vpg-fullscreen-nav:hover/);
   assert.match(source, /\.vpg-fullscreen-close:active/);
   assert.match(source, /\.vpg-fullscreen-control:focus-visible/);
+  assert.match(source, /outline:2px solid rgba\(255,255,255,\.9\);outline-offset:2px/);
   assert.doesNotMatch(source, /\.vpg-fullscreen-control[^}]*position:/);
 });
 

@@ -49,12 +49,13 @@ frames, verifies decode and source again, and rolls the exact previous image
 back on failure. Abort, callbacks, and injected browser primitives let
 applications keep lifecycle ownership without duplicating this mechanism.
 Adapters negotiate it with `capabilities.safeFullscreenImageReplace >= 1`.
-The same release publishes application-neutral visual classes
+Release `2.1.3` aligns the application-neutral visual classes
 `.vpg-fullscreen-control`, `.vpg-fullscreen-close`, and
 `.vpg-fullscreen-nav`, negotiated through
-`capabilities.fullscreenControlStyles >= 1`. They share the dark translucent
-surface, border, white foreground, blur fallback, hover/active and keyboard
-focus treatment. Applications still own placement, dimensions, safe areas,
+`capabilities.fullscreenControlStyles >= 1` with the original OVIK history
+button: a 10px radius, `rgba(255,255,255,.28)` border,
+`rgba(8,15,13,.62)` surface, white foreground, 8px blur fallback, and
+coordinated hover/active/keyboard-focus treatment. Applications still own placement, dimensions, safe areas,
 mobile arrow visibility, and unrelated controls.
 
 ```html
@@ -122,9 +123,10 @@ preview/original: активный проверенный оригинал мо�
 source. При ошибке предыдущий элемент точно возвращается. Возможность
 определяется через `capabilities.safeFullscreenImageReplace >= 1`.
 
-Классы `.vpg-fullscreen-control`, `.vpg-fullscreen-close` и
+Начиная с `2.1.3`, классы `.vpg-fullscreen-control`, `.vpg-fullscreen-close` и
 `.vpg-fullscreen-nav` задают единое визуальное оформление кнопок закрытия и
-стрелок: тёмную полупрозрачную подложку, контрастную рамку, белый знак, blur с
+стрелок в точности согласованы с исходной кнопкой истории OVIK: радиус 10px,
+рамка `rgba(255,255,255,.28)`, подложка `rgba(8,15,13,.62)`, белый знак и blur 8px с
 безопасным фоном, состояния hover/active и заметный `focus-visible`. Приложение
 по-прежнему отвечает за расположение, размеры, safe-area и скрытие стрелок на
 мобильных устройствах. Возможность определяется через

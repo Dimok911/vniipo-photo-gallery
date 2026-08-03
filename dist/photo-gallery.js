@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.2";
+  const VERSION = "2.1.3";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -107,10 +107,10 @@
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-track{overflow:hidden!important;scroll-snap-type:none!important;touch-action:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide{display:none!important;flex-basis:100%;scroll-snap-align:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide.vpg-fullscreen-active{display:grid!important;place-items:center}
-.vpg-fullscreen-control,.vpg-fullscreen-close,.vpg-fullscreen-nav{border:1px solid rgba(255,255,255,.5);border-radius:999px;color:#fff;background:rgba(40,44,52,.82);box-shadow:0 2px 10px rgba(0,0,0,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,opacity .14s ease;-webkit-tap-highlight-color:transparent}
-.vpg-fullscreen-control:hover,.vpg-fullscreen-close:hover,.vpg-fullscreen-nav:hover{border-color:rgba(255,255,255,.78);background:rgba(24,27,33,.9);box-shadow:0 3px 14px rgba(0,0,0,.4)}
-.vpg-fullscreen-control:active,.vpg-fullscreen-close:active,.vpg-fullscreen-nav:active{border-color:rgba(255,255,255,.62);background:rgba(12,14,18,.94);box-shadow:0 1px 6px rgba(0,0,0,.38)}
-.vpg-fullscreen-control:focus-visible,.vpg-fullscreen-close:focus-visible,.vpg-fullscreen-nav:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.vpg-fullscreen-control,.vpg-fullscreen-close,.vpg-fullscreen-nav{border:1px solid rgba(255,255,255,.28);border-radius:10px;color:#fff;background:rgba(8,15,13,.62);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .14s ease,border-color .14s ease,opacity .14s ease;-webkit-tap-highlight-color:transparent}
+.vpg-fullscreen-control:hover,.vpg-fullscreen-close:hover,.vpg-fullscreen-nav:hover{border-color:rgba(255,255,255,.44);background:rgba(8,15,13,.78)}
+.vpg-fullscreen-control:active,.vpg-fullscreen-close:active,.vpg-fullscreen-nav:active{border-color:rgba(255,255,255,.36);background:rgba(8,15,13,.88)}
+.vpg-fullscreen-control:focus-visible,.vpg-fullscreen-close:focus-visible,.vpg-fullscreen-nav:focus-visible{outline:2px solid rgba(255,255,255,.9);outline-offset:2px}
 .vpg-fullscreen-control:disabled,.vpg-fullscreen-close:disabled,.vpg-fullscreen-nav:disabled{opacity:.42}
 `;
     doc.head.appendChild(style);
