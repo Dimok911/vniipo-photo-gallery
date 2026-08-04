@@ -62,6 +62,15 @@ Release `2.1.4` injects this control contract through its own idempotent style
 block whenever a fullscreen switcher is created. A temporarily cached 2.0.1
 base style therefore cannot suppress newer fullscreen controls.
 
+Release `2.1.5` adds the pure
+`helpers.resolveFullscreenImagePresentation` sizing contract. Applications can
+use stored image dimensions to calculate the final contained base size before
+the fullscreen dialog enters the DOM. This removes the first-frame stretch and
+shrink jump while leaving each application in control of its auto-upscale
+threshold and layout CSS. Adapters negotiate it through
+`capabilities.fullscreenImagePresentation >= 1` and retain the bundled runtime
+when an older stable alias is cached.
+
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
 ```
@@ -135,6 +144,13 @@ source. При ошибке предыдущий элемент точно во�
 по-прежнему отвечает за расположение, размеры, safe-area и скрытие стрелок на
 мобильных устройствах. Возможность определяется через
 `capabilities.fullscreenControlStyles >= 1`.
+
+В `2.1.5` чистый helper `helpers.resolveFullscreenImagePresentation`
+вычисляет итоговый contained-размер по известным `width/height` до вставки
+fullscreen-диалога в DOM. Это убирает прыжок от растянутого первого кадра к
+нормальному размеру; порог автоувеличения и CSS остаются политикой
+приложения. Возможность определяется через
+`capabilities.fullscreenImagePresentation >= 1`.
 
 В `2.1.4` оформление контролов вынесено в отдельный идемпотентный style-блок,
 который подключается при создании fullscreen switcher. Поэтому временно

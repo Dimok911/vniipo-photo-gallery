@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.4";
+  const VERSION = "2.1.5";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -87,6 +87,39 @@
       y: (Number(y) || 0) + (Number(velocityY) || 0) * elapsed,
       velocityX: (Number(velocityX) || 0) * damping,
       velocityY: (Number(velocityY) || 0) * damping,
+    };
+  }
+
+  function resolveFullscreenImagePresentation({
+    naturalWidth = 0,
+    naturalHeight = 0,
+    availableWidth = 0,
+    availableHeight = 0,
+    preventUpscale = true,
+    preventUpscaleMaxPixels = Number.POSITIVE_INFINITY,
+  } = {}) {
+    const width = Math.max(0, Number(naturalWidth) || 0);
+    const height = Math.max(0, Number(naturalHeight) || 0);
+    const viewportWidth = Math.max(0, Number(availableWidth) || 0);
+    const viewportHeight = Math.max(0, Number(availableHeight) || 0);
+    if (!width || !height || !viewportWidth || !viewportHeight) {
+      return {
+        known: false,
+        preventUpscale: false,
+        width: 0,
+        height: 0,
+      };
+    }
+    const pixelLimit = Number(preventUpscaleMaxPixels);
+    const withinPolicy = !Number.isFinite(pixelLimit) || width * height <= Math.max(0, pixelLimit);
+    const fit = Math.min(viewportWidth / width, viewportHeight / height);
+    const shouldPreventUpscale = Boolean(preventUpscale) && withinPolicy && fit > 1;
+    const scale = Math.min(1, fit);
+    return {
+      known: true,
+      preventUpscale: shouldPreventUpscale,
+      width: shouldPreventUpscale ? width : Math.max(1, width * scale),
+      height: shouldPreventUpscale ? height : Math.max(1, height * scale),
     };
   }
 
@@ -931,6 +964,7 @@
       fullscreenSourceLifecycle: 1,
       safeFullscreenImageReplace: 1,
       fullscreenControlStyles: 1,
+      fullscreenImagePresentation: 1,
     }),
     bindInlineGalleries,
     createFullscreenSourceController,
@@ -947,6 +981,7 @@
       isDirectDesktop,
       resolveActiveIndex,
       resolveNavigationIndex,
+      resolveFullscreenImagePresentation,
       resolveSwipe,
       stepInertia,
     }),

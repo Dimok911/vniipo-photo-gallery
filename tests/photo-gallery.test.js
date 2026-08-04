@@ -14,11 +14,12 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.4");
+  assert.equal(runtime.version, "2.1.5");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
   assert.equal(runtime.capabilities.fullscreenControlStyles, 1);
+  assert.equal(runtime.capabilities.fullscreenImagePresentation, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
@@ -28,6 +29,56 @@ test("publishes a stable contract and reusable API", () => {
   assert.equal(typeof runtime.fullscreenImageUsesSource, "function");
   assert.equal(typeof runtime.loadAndDecodeFullscreenImage, "function");
   assert.equal(typeof runtime.replaceFullscreenImageSource, "function");
+});
+
+test("fullscreen presentation resolves a stable pre-paint size from known metadata", () => {
+  const { resolveFullscreenImagePresentation } = runtime.helpers;
+  assert.deepEqual(JSON.parse(JSON.stringify(resolveFullscreenImagePresentation({
+    naturalWidth: 640,
+    naturalHeight: 480,
+    availableWidth: 1200,
+    availableHeight: 900,
+  }))), {
+    known: true,
+    preventUpscale: true,
+    width: 640,
+    height: 480,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(resolveFullscreenImagePresentation({
+    naturalWidth: 4000,
+    naturalHeight: 3000,
+    availableWidth: 1200,
+    availableHeight: 900,
+  }))), {
+    known: true,
+    preventUpscale: false,
+    width: 1200,
+    height: 900,
+  });
+});
+
+test("fullscreen presentation keeps application upscale policy additive", () => {
+  const { resolveFullscreenImagePresentation } = runtime.helpers;
+  assert.equal(resolveFullscreenImagePresentation({
+    naturalWidth: 1600,
+    naturalHeight: 900,
+    availableWidth: 1920,
+    availableHeight: 1080,
+    preventUpscaleMaxPixels: 1_000_000,
+  }).preventUpscale, false);
+  assert.equal(resolveFullscreenImagePresentation({
+    naturalWidth: 800,
+    naturalHeight: 600,
+    availableWidth: 1920,
+    availableHeight: 1080,
+    preventUpscaleMaxPixels: 1_000_000,
+  }).preventUpscale, true);
+  assert.equal(resolveFullscreenImagePresentation({
+    naturalWidth: 0,
+    naturalHeight: 0,
+    availableWidth: 1920,
+    availableHeight: 1080,
+  }).known, false);
 });
 
 test("gesture helper distinguishes tap, horizontal swipe, and vertical page scroll", () => {
