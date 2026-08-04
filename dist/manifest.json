@@ -1,11 +1,11 @@
 {
   "name": "vniipo-photo-gallery",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "contractVersion": 2,
   "channel": "stable",
   "asset": "photo-gallery.js",
-  "immutableUrl": "/shared-ui/photo-gallery/v2.1.5/photo-gallery.js",
+  "immutableUrl": "/shared-ui/photo-gallery/v2.1.6/photo-gallery.js",
   "stableUrl": "/shared-ui/photo-gallery/stable.js",
-  "sha256": "e8410ad85f615da7825f1aa3537249655c686a9dcb06ef2d50e59db8496082e9",
+  "sha256": "2be42e319b087615badca5c33264443d60d985b4929827cf656140e65679c12d",
   "updateWindowMinutes": 60
 }

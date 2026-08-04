@@ -14,14 +14,14 @@ await mkdir(distPath, { recursive: true });
 await writeFile(assetPath, source);
 await writeFile(path.join(distPath, "manifest.json"), `${JSON.stringify({
   name: "vniipo-photo-gallery",
-  version: "2.1.5",
+  version: "2.1.6",
   contractVersion: 2,
   channel: "stable",
   asset: "photo-gallery.js",
-  immutableUrl: "/shared-ui/photo-gallery/v2.1.5/photo-gallery.js",
+  immutableUrl: "/shared-ui/photo-gallery/v2.1.6/photo-gallery.js",
   stableUrl: "/shared-ui/photo-gallery/stable.js",
   sha256: hash,
   updateWindowMinutes: 60,
 }, null, 2)}\n`);
 
-console.log(`Built vniipo-photo-gallery 2.1.5 sha256=${hash}`);
+console.log(`Built vniipo-photo-gallery 2.1.6 sha256=${hash}`);

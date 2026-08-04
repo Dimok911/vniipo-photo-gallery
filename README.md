@@ -71,6 +71,14 @@ threshold and layout CSS. Adapters negotiate it through
 `capabilities.fullscreenImagePresentation >= 1` and retain the bundled runtime
 when an older stable alias is cached.
 
+Release `2.1.6` hardens native mobile fullscreen swiping at the first and last
+slide. After `touchend` or `touchcancel`, the switcher performs a smooth return
+and two delayed exact settles of the current active slide. The final settle
+temporarily releases scroll snap so iOS Safari cannot leave the track visually
+stuck in elastic edge overscroll. Adapters negotiate it through
+`capabilities.fullscreenEdgeSettling >= 1` and retain their bundled runtime
+when an older stable alias is cached.
+
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
 ```
@@ -151,6 +159,14 @@ fullscreen-диалога в DOM. Это убирает прыжок от рас
 нормальному размеру; порог автоувеличения и CSS остаются политикой
 приложения. Возможность определяется через
 `capabilities.fullscreenImagePresentation >= 1`.
+
+В `2.1.6` полноэкранный переключатель надёжно завершает нативный мобильный
+свайп на первом и последнем слайде. После `touchend` или `touchcancel` он
+сначала плавно возвращает активный слайд, затем дважды точно фиксирует его
+позицию с временным отключением scroll snap. Это не позволяет iOS Safari
+оставить ленту в состоянии упругого overscroll. Возможность определяется
+через `capabilities.fullscreenEdgeSettling >= 1`; при закэшированном старом
+stable-скрипте приложение сохраняет совместимый встроенный runtime.
 
 В `2.1.4` оформление контролов вынесено в отдельный идемпотентный style-блок,
 который подключается при создании fullscreen switcher. Поэтому временно

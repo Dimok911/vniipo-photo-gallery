@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.5";
+  const VERSION = "2.1.6";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -170,6 +170,16 @@
     const directDesktop = options.directDesktop ?? isDirectDesktop(options.windowRef || global);
     let activeIndex = clamp(options.initialIndex, 0, Math.max(0, slides.length - 1));
     let destroyed = false;
+    let edgeSettleFrame = 0;
+    const edgeSettleTimers = new Set();
+    const requestFrame = options.requestAnimationFrame
+      || global.requestAnimationFrame?.bind(global)
+      || ((callback) => setTimeout(callback, 16));
+    const cancelFrame = options.cancelAnimationFrame
+      || global.cancelAnimationFrame?.bind(global)
+      || clearTimeout;
+    const scheduleTimer = options.setTimeout || setTimeout;
+    const cancelTimer = options.clearTimeout || clearTimeout;
 
     const doc = root?.ownerDocument || track?.ownerDocument || global.document;
     ensureStyles(doc);
@@ -194,21 +204,71 @@
       return activeIndex;
     }
 
+    function activeSlideLeft() {
+      const slide = slides[activeIndex];
+      if (!slide) return 0;
+      return Number.isFinite(Number(slide.offsetLeft))
+        ? Number(slide.offsetLeft)
+        : Number(track?.clientWidth || 0) * activeIndex;
+    }
+
+    function scrollActiveIntoPlace(behavior = "auto", force = false) {
+      if (destroyed || directDesktop || !track || !slides[activeIndex]) return activeIndex;
+      const left = activeSlideLeft();
+      if (force && track.style) {
+        const previousSnapType = track.style.scrollSnapType || "";
+        track.style.scrollSnapType = "none";
+        track.scrollLeft = left;
+        void track.offsetWidth;
+        if (previousSnapType) track.style.scrollSnapType = previousSnapType;
+        else track.style.removeProperty?.("scroll-snap-type");
+      }
+      track.scrollTo?.({ left, behavior });
+      if (force && Math.abs((Number(track.scrollLeft) || 0) - left) > 1) {
+        track.scrollLeft = left;
+      }
+      return activeIndex;
+    }
+
+    function cancelEdgeSettle() {
+      if (edgeSettleFrame) cancelFrame(edgeSettleFrame);
+      edgeSettleFrame = 0;
+      edgeSettleTimers.forEach((timer) => cancelTimer(timer));
+      edgeSettleTimers.clear();
+    }
+
+    function scheduleEdgeSettle() {
+      if (destroyed || directDesktop || !track) return;
+      cancelEdgeSettle();
+      edgeSettleFrame = requestFrame(() => {
+        edgeSettleFrame = 0;
+        scrollActiveIntoPlace("smooth");
+      });
+      [180, 420].forEach((delay) => {
+        const timer = scheduleTimer(() => {
+          edgeSettleTimers.delete(timer);
+          scrollActiveIntoPlace("auto", true);
+        }, delay);
+        edgeSettleTimers.add(timer);
+      });
+    }
+
     function goTo(index, behavior = "smooth", notify = true) {
       const next = render(index, notify);
-      const slide = slides[next];
-      if (!directDesktop && track && slide) {
-        const left = Number.isFinite(Number(slide.offsetLeft))
-          ? Number(slide.offsetLeft)
-          : Number(track.clientWidth || 0) * next;
-        track.scrollTo?.({ left, behavior });
-      }
+      scrollActiveIntoPlace(behavior);
       return next;
     }
+
+    const onTouchRelease = () => scheduleEdgeSettle();
+    track?.addEventListener?.("touchend", onTouchRelease, { passive: true });
+    track?.addEventListener?.("touchcancel", onTouchRelease, { passive: true });
 
     function destroy() {
       if (destroyed) return;
       destroyed = true;
+      cancelEdgeSettle();
+      track?.removeEventListener?.("touchend", onTouchRelease, { passive: true });
+      track?.removeEventListener?.("touchcancel", onTouchRelease, { passive: true });
       root?.classList?.remove("vpg-fullscreen", "vpg-direct-desktop");
       track?.classList?.remove("vpg-fullscreen-track");
       slides.forEach((slide) => {
@@ -223,6 +283,7 @@
       get activeIndex() { return activeIndex; },
       goTo,
       render,
+      settle: scheduleEdgeSettle,
       destroy,
     };
   }
@@ -965,6 +1026,7 @@
       safeFullscreenImageReplace: 1,
       fullscreenControlStyles: 1,
       fullscreenImagePresentation: 1,
+      fullscreenEdgeSettling: 1,
     }),
     bindInlineGalleries,
     createFullscreenSourceController,

@@ -14,12 +14,13 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.5");
+  assert.equal(runtime.version, "2.1.6");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
   assert.equal(runtime.capabilities.fullscreenControlStyles, 1);
   assert.equal(runtime.capabilities.fullscreenImagePresentation, 1);
+  assert.equal(runtime.capabilities.fullscreenEdgeSettling, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
@@ -242,6 +243,60 @@ test("fullscreen switcher retains native mobile scrolling", () => {
   });
   switcher.goTo(1, "smooth");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
+});
+
+test("fullscreen switcher releases iOS edge overscroll and hard-settles the active slide", () => {
+  const slides = [slide(0), slide(360)];
+  const calls = [];
+  const listeners = new Map();
+  const frames = [];
+  const timers = [];
+  const style = {
+    scrollSnapType: "",
+    removeProperty(name) {
+      if (name === "scroll-snap-type") this.scrollSnapType = "";
+    },
+  };
+  const track = {
+    clientWidth: 360,
+    scrollLeft: -44,
+    offsetWidth: 360,
+    style,
+    classList: classList(),
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    removeEventListener(type, listener) {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    },
+    scrollTo(value) {
+      calls.push({ ...value });
+      if (value.behavior === "auto") this.scrollLeft = value.left;
+    },
+  };
+  const switcher = runtime.createFullscreenSwitcher({
+    root: { classList: classList() },
+    track,
+    slides,
+    directDesktop: false,
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+    cancelAnimationFrame() {},
+    setTimeout(callback) { timers.push(callback); return timers.length; },
+    clearTimeout() {},
+  });
+
+  listeners.get("touchend")();
+  frames.shift()();
+  assert.deepEqual(calls.shift(), { left: 0, behavior: "smooth" });
+  timers.splice(0).forEach((callback) => callback());
+  assert.equal(track.scrollLeft, 0);
+  assert.equal(style.scrollSnapType, "");
+  assert.deepEqual(calls, [
+    { left: 0, behavior: "auto" },
+    { left: 0, behavior: "auto" },
+  ]);
+
+  switcher.destroy();
+  assert.equal(listeners.has("touchend"), false);
+  assert.equal(listeners.has("touchcancel"), false);
 });
 
 test("safe fullscreen replacement commits only a decoded matching source after paint", async () => {
