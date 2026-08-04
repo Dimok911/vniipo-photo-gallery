@@ -14,13 +14,14 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.6");
+  assert.equal(runtime.version, "2.1.7");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
   assert.equal(runtime.capabilities.fullscreenControlStyles, 1);
   assert.equal(runtime.capabilities.fullscreenImagePresentation, 1);
-  assert.equal(runtime.capabilities.fullscreenEdgeSettling, 1);
+  assert.equal(runtime.capabilities.fullscreenEdgeSettling, 2);
+  assert.equal(runtime.capabilities.fullscreenEdgeRubberBand, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
@@ -204,6 +205,12 @@ const classList = () => {
 const slide = (offsetLeft) => ({
   offsetLeft,
   classList: classList(),
+  style: {
+    transform: "",
+    removeProperty(name) {
+      if (name === "transform") this.transform = "";
+    },
+  },
   attributes: new Map(),
   setAttribute(name, value) { this.attributes.set(name, value); },
   removeAttribute(name) { this.attributes.delete(name); },
@@ -245,23 +252,15 @@ test("fullscreen switcher retains native mobile scrolling", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
 });
 
-test("fullscreen switcher releases iOS edge overscroll and hard-settles the active slide", () => {
+test("fullscreen switcher rubber-bands only an outward edge drag and leaves normal swipes native", () => {
   const slides = [slide(0), slide(360)];
   const calls = [];
   const listeners = new Map();
-  const frames = [];
   const timers = [];
-  const style = {
-    scrollSnapType: "",
-    removeProperty(name) {
-      if (name === "scroll-snap-type") this.scrollSnapType = "";
-    },
-  };
   const track = {
     clientWidth: 360,
-    scrollLeft: -44,
+    scrollLeft: 0,
     offsetWidth: 360,
-    style,
     classList: classList(),
     addEventListener(type, listener) { listeners.set(type, listener); },
     removeEventListener(type, listener) {
@@ -269,7 +268,7 @@ test("fullscreen switcher releases iOS edge overscroll and hard-settles the acti
     },
     scrollTo(value) {
       calls.push({ ...value });
-      if (value.behavior === "auto") this.scrollLeft = value.left;
+      this.scrollLeft = value.left;
     },
   };
   const switcher = runtime.createFullscreenSwitcher({
@@ -277,26 +276,51 @@ test("fullscreen switcher releases iOS edge overscroll and hard-settles the acti
     track,
     slides,
     directDesktop: false,
-    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
-    cancelAnimationFrame() {},
     setTimeout(callback) { timers.push(callback); return timers.length; },
     clearTimeout() {},
   });
 
-  listeners.get("touchend")();
-  frames.shift()();
-  assert.deepEqual(calls.shift(), { left: 0, behavior: "smooth" });
+  listeners.get("touchstart")({ touches: [{ clientX: 100, clientY: 40 }] });
+  let normalPrevented = false;
+  listeners.get("touchmove")({
+    touches: [{ clientX: 20, clientY: 42 }],
+    preventDefault() { normalPrevented = true; },
+  });
+  listeners.get("touchend")({ preventDefault() { normalPrevented = true; } });
+  assert.equal(normalPrevented, false);
+  assert.equal(slides[0].style.transform, "");
+  assert.deepEqual(calls, []);
+
+  listeners.get("touchstart")({ touches: [{ clientX: 100, clientY: 40 }] });
+  let edgePrevented = false;
+  listeners.get("touchmove")({
+    touches: [{ clientX: 200, clientY: 42 }],
+    preventDefault() { edgePrevented = true; },
+  });
+  assert.equal(edgePrevented, true);
+  assert.equal(slides[0].style.transform, "translate3d(24px,0,0)");
+  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-dragging"), true);
+  listeners.get("touchend")({ preventDefault() { edgePrevented = true; } });
+  assert.equal(slides[0].style.transform, "translate3d(0,0,0)");
+  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-returning"), true);
+  assert.deepEqual(calls, []);
+
   timers.splice(0).forEach((callback) => callback());
   assert.equal(track.scrollLeft, 0);
-  assert.equal(style.scrollSnapType, "");
-  assert.deepEqual(calls, [
-    { left: 0, behavior: "auto" },
-    { left: 0, behavior: "auto" },
-  ]);
+  assert.equal(slides[0].style.transform, "");
+  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-returning"), false);
 
   switcher.destroy();
+  assert.equal(listeners.has("touchstart"), false);
+  assert.equal(listeners.has("touchmove"), false);
   assert.equal(listeners.has("touchend"), false);
   assert.equal(listeners.has("touchcancel"), false);
+});
+
+test("inline and fullscreen galleries share the same edge rubber-band controller", () => {
+  assert.equal((source.match(/createEdgeRubberBandController\(\{/g) || []).length, 2);
+  assert.match(source, /function bindGallery\(gallery, options\)[\s\S]*edgeRubberBand = createEdgeRubberBandController\(\{[\s\S]*getSlides: \(\) => slides/);
+  assert.doesNotMatch(source, /\[180, 420\]/);
 });
 
 test("safe fullscreen replacement commits only a decoded matching source after paint", async () => {

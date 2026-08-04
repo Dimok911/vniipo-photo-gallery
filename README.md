@@ -71,13 +71,15 @@ threshold and layout CSS. Adapters negotiate it through
 `capabilities.fullscreenImagePresentation >= 1` and retain the bundled runtime
 when an older stable alias is cached.
 
-Release `2.1.6` hardens native mobile fullscreen swiping at the first and last
-slide. After `touchend` or `touchcancel`, the switcher performs a smooth return
-and two delayed exact settles of the current active slide. The final settle
-temporarily releases scroll snap so iOS Safari cannot leave the track visually
-stuck in elastic edge overscroll. Adapters negotiate it through
-`capabilities.fullscreenEdgeSettling >= 1` and retain their bundled runtime
-when an older stable alias is cached.
+Release `2.1.6` introduced delayed post-touch settling. Release `2.1.7`
+replaces that approach because it could interfere with an ordinary transition
+between photos. A single shared edge controller now intercepts only an outward
+horizontal drag on the first or last slide, applies a bounded resistant offset,
+and animates that slide back. Normal inline and fullscreen swipes remain fully
+native and receive no delayed `scrollTo`. Adapters negotiate the corrected
+behavior through `capabilities.fullscreenEdgeRubberBand >= 1`; the retained
+`fullscreenEdgeSettling: 2` value lets a 2.1.6 adapter prefer this fixed stable
+runtime over its regressed bundled fallback.
 
 ```html
 <script async src="https://vniipo-help.ru/shared-ui/photo-gallery/stable.js"></script>
@@ -160,13 +162,15 @@ fullscreen-диалога в DOM. Это убирает прыжок от рас
 приложения. Возможность определяется через
 `capabilities.fullscreenImagePresentation >= 1`.
 
-В `2.1.6` полноэкранный переключатель надёжно завершает нативный мобильный
-свайп на первом и последнем слайде. После `touchend` или `touchcancel` он
-сначала плавно возвращает активный слайд, затем дважды точно фиксирует его
-позицию с временным отключением scroll snap. Это не позволяет iOS Safari
-оставить ленту в состоянии упругого overscroll. Возможность определяется
-через `capabilities.fullscreenEdgeSettling >= 1`; при закэшированном старом
-stable-скрипте приложение сохраняет совместимый встроенный runtime.
+В `2.1.6` появилась отложенная фиксация после touch-жеста. В `2.1.7` этот
+подход заменён, потому что он мог вмешиваться в обычное перелистывание и
+вызывать рывки. Теперь один общий edge-контроллер перехватывает только жест
+наружу на первом или последнем слайде, показывает ограниченное сопротивление и
+анимированно возвращает слайд. Обычные свайпы миниатюрной и полноэкранной ленты
+остаются нативными и не получают отложенных `scrollTo`. Исправленный контракт
+определяется через `capabilities.fullscreenEdgeRubberBand >= 1`; сохранённое
+значение `fullscreenEdgeSettling: 2` позволяет адаптеру 2.1.6 выбрать новый
+stable runtime вместо регрессивного встроенного fallback.
 
 В `2.1.4` оформление контролов вынесено в отдельный идемпотентный style-блок,
 который подключается при создании fullscreen switcher. Поэтому временно

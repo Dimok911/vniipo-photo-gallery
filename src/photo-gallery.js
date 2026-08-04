@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.6";
+  const VERSION = "2.1.7";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -141,6 +141,8 @@
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-track{overflow:hidden!important;scroll-snap-type:none!important;touch-action:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide{display:none!important;flex-basis:100%;scroll-snap-align:none!important}
 .vpg-fullscreen.vpg-direct-desktop .vpg-fullscreen-slide.vpg-fullscreen-active{display:grid!important;place-items:center}
+.vpg-edge-rubber-band-dragging{will-change:transform;transition:none!important}
+.vpg-edge-rubber-band-returning{will-change:transform;transition:transform 180ms cubic-bezier(.22,.8,.32,1)!important}
 `;
     doc.head.appendChild(style);
   }
@@ -163,6 +165,125 @@
     return { ...defaults, ...(custom || {}) };
   }
 
+  function createEdgeRubberBandController(options = {}) {
+    const track = options.track;
+    const getSlides = typeof options.getSlides === "function"
+      ? options.getSlides
+      : () => Array.from(options.slides || track?.children || []);
+    const getActiveIndex = typeof options.getActiveIndex === "function"
+      ? options.getActiveIndex
+      : () => 0;
+    const scheduleTimer = options.setTimeout || setTimeout;
+    const cancelTimer = options.clearTimeout || clearTimeout;
+    const resistance = Math.max(0.05, Math.min(0.5, Number(options.resistance) || 0.24));
+    const maxOffset = Math.max(12, Math.min(72, Number(options.maxOffset) || 44));
+    let gesture = null;
+    let release = null;
+    let destroyed = false;
+
+    function slideLeft(slide, index) {
+      return Number.isFinite(Number(slide?.offsetLeft))
+        ? Number(slide.offsetLeft)
+        : Number(track?.clientWidth || 0) * index;
+    }
+
+    function restore(state) {
+      const slide = state?.slide;
+      if (!slide) return;
+      slide.classList?.remove("vpg-edge-rubber-band-dragging", "vpg-edge-rubber-band-returning");
+      if (!slide.style) return;
+      if (state.previousTransform) slide.style.transform = state.previousTransform;
+      else slide.style.removeProperty?.("transform");
+    }
+
+    function clear() {
+      if (release?.timer) cancelTimer(release.timer);
+      restore(release);
+      restore(gesture);
+      release = null;
+      gesture = null;
+    }
+
+    function finish() {
+      const ended = gesture;
+      gesture = null;
+      if (!ended) return false;
+      if (!ended.moved || !ended.slide?.style) {
+        restore(ended);
+        return false;
+      }
+      ended.slide.classList?.remove("vpg-edge-rubber-band-dragging");
+      ended.slide.classList?.add("vpg-edge-rubber-band-returning");
+      ended.slide.style.transform = ended.previousTransform || "translate3d(0,0,0)";
+      const pending = { ...ended, timer: 0 };
+      pending.timer = scheduleTimer(() => {
+        if (release !== pending) return;
+        restore(pending);
+        release = null;
+      }, 220);
+      release = pending;
+      return true;
+    }
+
+    const onTouchStart = (event) => {
+      clear();
+      if (destroyed || options.disabled || event.touches?.length !== 1) return;
+      const slides = getSlides();
+      if (!slides.length) return;
+      const index = clamp(getActiveIndex(), 0, slides.length - 1);
+      const slide = slides[index];
+      const left = slideLeft(slide, index);
+      const aligned = Math.abs((Number(track?.scrollLeft) || 0) - left) <= 2;
+      const atStart = aligned && index === 0;
+      const atEnd = aligned && index === slides.length - 1;
+      if (!atStart && !atEnd) return;
+      gesture = {
+        side: atStart && atEnd ? "both" : atStart ? "start" : "end",
+        startX: Number(event.touches[0].clientX) || 0,
+        startY: Number(event.touches[0].clientY) || 0,
+        previousTransform: slide?.style?.transform || "",
+        slide,
+        left,
+        moved: false,
+      };
+    };
+    const onTouchMove = (event) => {
+      if (!gesture || event.touches?.length !== 1) return;
+      const dx = (Number(event.touches[0].clientX) || 0) - gesture.startX;
+      const dy = (Number(event.touches[0].clientY) || 0) - gesture.startY;
+      const outward = gesture.side === "both" || (gesture.side === "start" ? dx > 0 : dx < 0);
+      if (!outward || Math.abs(dx) <= Math.abs(dy) * 1.05) return;
+      event.preventDefault?.();
+      track.scrollLeft = gesture.left;
+      const offset = Math.sign(dx) * Math.min(maxOffset, Math.abs(dx) * resistance);
+      gesture.slide?.classList?.add("vpg-edge-rubber-band-dragging");
+      if (gesture.slide?.style) gesture.slide.style.transform = `translate3d(${offset}px,0,0)`;
+      gesture.moved = true;
+    };
+    const onTouchEnd = (event) => {
+      if (finish()) event.preventDefault?.();
+    };
+    const onTouchCancel = () => finish();
+
+    track?.addEventListener?.("touchstart", onTouchStart, { passive: true });
+    track?.addEventListener?.("touchmove", onTouchMove, { passive: false });
+    track?.addEventListener?.("touchend", onTouchEnd, { passive: false });
+    track?.addEventListener?.("touchcancel", onTouchCancel, { passive: true });
+
+    return {
+      clear,
+      destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        clear();
+        track?.removeEventListener?.("touchstart", onTouchStart, { passive: true });
+        track?.removeEventListener?.("touchmove", onTouchMove, { passive: false });
+        track?.removeEventListener?.("touchend", onTouchEnd, { passive: false });
+        track?.removeEventListener?.("touchcancel", onTouchCancel, { passive: true });
+      },
+    };
+  }
+
   function createFullscreenSwitcher(options = {}) {
     const root = options.root;
     const track = options.track;
@@ -170,16 +291,7 @@
     const directDesktop = options.directDesktop ?? isDirectDesktop(options.windowRef || global);
     let activeIndex = clamp(options.initialIndex, 0, Math.max(0, slides.length - 1));
     let destroyed = false;
-    let edgeSettleFrame = 0;
-    const edgeSettleTimers = new Set();
-    const requestFrame = options.requestAnimationFrame
-      || global.requestAnimationFrame?.bind(global)
-      || ((callback) => setTimeout(callback, 16));
-    const cancelFrame = options.cancelAnimationFrame
-      || global.cancelAnimationFrame?.bind(global)
-      || clearTimeout;
-    const scheduleTimer = options.setTimeout || setTimeout;
-    const cancelTimer = options.clearTimeout || clearTimeout;
+    let edgeRubberBand = null;
 
     const doc = root?.ownerDocument || track?.ownerDocument || global.document;
     ensureStyles(doc);
@@ -191,7 +303,9 @@
 
     function render(index, notify = true) {
       if (destroyed) return activeIndex;
+      const previousIndex = activeIndex;
       activeIndex = clamp(index, 0, Math.max(0, slides.length - 1));
+      if (activeIndex !== previousIndex) edgeRubberBand?.clear();
       slides.forEach((slide, candidate) => {
         const active = candidate === activeIndex;
         slide.classList?.toggle("vpg-fullscreen-active", active);
@@ -215,42 +329,11 @@
     function scrollActiveIntoPlace(behavior = "auto", force = false) {
       if (destroyed || directDesktop || !track || !slides[activeIndex]) return activeIndex;
       const left = activeSlideLeft();
-      if (force && track.style) {
-        const previousSnapType = track.style.scrollSnapType || "";
-        track.style.scrollSnapType = "none";
-        track.scrollLeft = left;
-        void track.offsetWidth;
-        if (previousSnapType) track.style.scrollSnapType = previousSnapType;
-        else track.style.removeProperty?.("scroll-snap-type");
-      }
       track.scrollTo?.({ left, behavior });
       if (force && Math.abs((Number(track.scrollLeft) || 0) - left) > 1) {
         track.scrollLeft = left;
       }
       return activeIndex;
-    }
-
-    function cancelEdgeSettle() {
-      if (edgeSettleFrame) cancelFrame(edgeSettleFrame);
-      edgeSettleFrame = 0;
-      edgeSettleTimers.forEach((timer) => cancelTimer(timer));
-      edgeSettleTimers.clear();
-    }
-
-    function scheduleEdgeSettle() {
-      if (destroyed || directDesktop || !track) return;
-      cancelEdgeSettle();
-      edgeSettleFrame = requestFrame(() => {
-        edgeSettleFrame = 0;
-        scrollActiveIntoPlace("smooth");
-      });
-      [180, 420].forEach((delay) => {
-        const timer = scheduleTimer(() => {
-          edgeSettleTimers.delete(timer);
-          scrollActiveIntoPlace("auto", true);
-        }, delay);
-        edgeSettleTimers.add(timer);
-      });
     }
 
     function goTo(index, behavior = "smooth", notify = true) {
@@ -259,16 +342,21 @@
       return next;
     }
 
-    const onTouchRelease = () => scheduleEdgeSettle();
-    track?.addEventListener?.("touchend", onTouchRelease, { passive: true });
-    track?.addEventListener?.("touchcancel", onTouchRelease, { passive: true });
+    edgeRubberBand = createEdgeRubberBandController({
+      track,
+      slides,
+      getActiveIndex: () => activeIndex,
+      disabled: directDesktop,
+      resistance: options.edgeResistance,
+      maxOffset: options.edgeMaxOffset,
+      setTimeout: options.setTimeout,
+      clearTimeout: options.clearTimeout,
+    });
 
     function destroy() {
       if (destroyed) return;
       destroyed = true;
-      cancelEdgeSettle();
-      track?.removeEventListener?.("touchend", onTouchRelease, { passive: true });
-      track?.removeEventListener?.("touchcancel", onTouchRelease, { passive: true });
+      edgeRubberBand?.destroy();
       root?.classList?.remove("vpg-fullscreen", "vpg-direct-desktop");
       track?.classList?.remove("vpg-fullscreen-track");
       slides.forEach((slide) => {
@@ -283,7 +371,7 @@
       get activeIndex() { return activeIndex; },
       goTo,
       render,
-      settle: scheduleEdgeSettle,
+      settle: () => scrollActiveIntoPlace("auto", true),
       destroy,
     };
   }
@@ -777,6 +865,7 @@
     let suppressClickUntil = 0;
     let touch = null;
     let destroyed = false;
+    let edgeRubberBand = null;
 
     const listen = (target, type, listener, listenerOptions) => {
       target.addEventListener(type, listener, listenerOptions);
@@ -784,6 +873,7 @@
     };
 
     function collect() {
+      edgeRubberBand?.clear();
       slides = Array.from(track.querySelectorAll(selectors.slide));
       dots = Array.from(gallery.querySelectorAll(selectors.dot));
       gallery.classList.toggle("vpg-has-dots", dots.length > 1);
@@ -792,7 +882,9 @@
     }
 
     function updateDots(nextIndex, notify = true) {
+      const previousIndex = activeIndex;
       activeIndex = clamp(nextIndex, 0, Math.max(0, slides.length - 1));
+      if (activeIndex !== previousIndex) edgeRubberBand?.clear();
       dots.forEach((dot, index) => {
         const active = index === activeIndex;
         dot.classList.toggle("active", active);
@@ -865,6 +957,16 @@
       const slide = target && target.closest ? target.closest(selectors.slide) : null;
       return slide ? slides.indexOf(slide) : -1;
     }
+
+    edgeRubberBand = createEdgeRubberBandController({
+      track,
+      getSlides: () => slides,
+      getActiveIndex: () => activeIndex,
+      resistance: options.edgeResistance,
+      maxOffset: options.edgeMaxOffset,
+      setTimeout: options.setTimeout,
+      clearTimeout: options.clearTimeout,
+    });
 
     listen(track, "scroll", syncFromScroll, { passive: true });
     listen(track, "wheel", cancelPendingScroll, { passive: true });
@@ -967,6 +1069,7 @@
         if (destroyed) return;
         destroyed = true;
         cancelPendingScroll();
+        edgeRubberBand?.destroy();
         listeners.splice(0).forEach((remove) => remove());
         bindings.delete(gallery);
       },
@@ -1026,7 +1129,8 @@
       safeFullscreenImageReplace: 1,
       fullscreenControlStyles: 1,
       fullscreenImagePresentation: 1,
-      fullscreenEdgeSettling: 1,
+      fullscreenEdgeSettling: 2,
+      fullscreenEdgeRubberBand: 1,
     }),
     bindInlineGalleries,
     createFullscreenSourceController,
