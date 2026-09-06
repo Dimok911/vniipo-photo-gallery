@@ -8,6 +8,45 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+Since 2.2.0, readiness-aware fullscreen presentation belongs to this shared
+runtime. Applications provide their image sources and readiness signals rather
+than duplicating the requested-versus-presented slide state machine.
+
+### Ready fullscreen navigation (2.2.0)
+
+Negotiate `capabilities.readyFullscreenNavigation >= 1` and create the switcher
+with `waitForReady: true`. Use `activate(index, prepare, options)` for a new
+selection. `prepare({ index, slide, signal })` loads, decodes, and sizes the
+application's target image and returns exactly `true` when safe to display.
+Return `false` or throw on failure. The switcher retains the previous desktop
+slide, rejects obsolete completions (including same-index retries), and aborts
+the signal on a new selection or destruction. `render`, `goTo`, and resize
+cannot bypass readiness. `activeIndex` is the requested photo;
+`presentedIndex` is the displayed photo. `onPresented` can align annotations or
+other overlays with the actual displayed image.
+
+```js
+const switcher = VniipoPhotoGallery.createFullscreenSwitcher({
+  root, track, slides, initialIndex: 0, waitForReady: true,
+  onPresented: ({ index }) => updatePhotoOverlays(index),
+});
+await switcher.activate(nextIndex, async ({ index, signal }) => {
+  await app.loadDecodeAndSizePhoto(index, signal);
+  return true;
+}, { notify: false });
+```
+
+Touch scrolling remains immediate/native. Pass `scroll: false` when the
+application already owns native scrolling or calls `goTo` itself. This is a
+one-time opt-in adapter migration: existing consumers keep contract 2 and the
+legacy synchronous behavior until migrated. Future fixes to readiness and
+atomic switching then live here. Never promise that publishing `stable.js`
+alone migrates old application adapters. Keep a matching bundled fallback and
+prefer it over an older cached stable script without the new capability.
+
+2.2.0 also preserves the vertical-touch fix previously bundled as 2.1.8 in
+Bike Packing: vertical page gestures must not snap the inline image track.
+
 The stable script publishes `window.VniipoPhotoGallery`:
 
 - `version`, `contractVersion`, and additive `capabilities`;
@@ -124,6 +163,14 @@ Rollback only changes the `stable.js` alias and manifest to the preceding immuta
 No external npm or CDN dependency is used.
 
 ## Русский
+
+В версии 2.2.0 ожидание готового кадра и переключение без пустого промежутка
+реализованы в общем модуле. Приложение один раз подключает `waitForReady: true`
+и `activate(index, prepare)`: callback загружает/декодирует фото и задаёт его
+размер, а модуль сохраняет предыдущий кадр и отбрасывает устаревшие результаты.
+`activeIndex` — выбранное фото, `presentedIndex` — фактически показанное.
+Нативный свайп не задерживается. Для старых подключений сохранена совместимость;
+они не получают новую политику показа автоматически до миграции адаптера.
 
 `vniipo-photo-gallery` — общий браузерный runtime фотогалерей для OVIK,
 Bikepacking, WIC и следующих приложений ВНИИПО. Текущий контракт `2` сохраняет
