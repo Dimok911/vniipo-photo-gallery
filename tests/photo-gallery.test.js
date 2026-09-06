@@ -14,14 +14,14 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.2.0");
+  assert.equal(runtime.version, "2.2.1");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
   assert.equal(runtime.capabilities.fullscreenControlStyles, 1);
   assert.equal(runtime.capabilities.fullscreenImagePresentation, 1);
   assert.equal(runtime.capabilities.fullscreenEdgeSettling, 2);
-  assert.equal(runtime.capabilities.fullscreenEdgeRubberBand, 1);
+  assert.equal(runtime.capabilities.fullscreenEdgeRubberBand, 2);
   assert.equal(runtime.capabilities.readyFullscreenNavigation, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
@@ -215,6 +215,10 @@ const slide = (offsetLeft) => ({
   attributes: new Map(),
   setAttribute(name, value) { this.attributes.set(name, value); },
   removeAttribute(name) { this.attributes.delete(name); },
+  firstElementChild: {
+    classList: classList(),
+    style: { translate: "", transform: "scale(1)", removeProperty(name) { this[name] = ""; } },
+  },
 });
 
 test("fullscreen switcher swaps desktop slides without scrolling the track", () => {
@@ -397,17 +401,19 @@ test("fullscreen switcher rubber-bands only an outward edge drag and leaves norm
     preventDefault() { edgePrevented = true; },
   });
   assert.equal(edgePrevented, true);
-  assert.equal(slides[0].style.transform, "translate3d(24px,0,0)");
-  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-dragging"), true);
+  assert.equal(slides[0].style.transform, "");
+  assert.equal(slides[0].firstElementChild.style.translate, "24px 0px");
+  assert.equal(slides[0].firstElementChild.classList.values.has("vpg-edge-content-dragging"), true);
   listeners.get("touchend")({ preventDefault() { edgePrevented = true; } });
-  assert.equal(slides[0].style.transform, "translate3d(0,0,0)");
-  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-returning"), true);
+  assert.equal(slides[0].firstElementChild.style.translate, "0px 0px");
+  assert.equal(slides[0].firstElementChild.classList.values.has("vpg-edge-content-returning"), true);
   assert.deepEqual(calls, []);
 
   timers.splice(0).forEach((callback) => callback());
   assert.equal(track.scrollLeft, 0);
   assert.equal(slides[0].style.transform, "");
-  assert.equal(slides[0].classList.values.has("vpg-edge-rubber-band-returning"), false);
+  assert.equal(slides[0].firstElementChild.style.translate, "");
+  assert.equal(slides[0].firstElementChild.classList.values.has("vpg-edge-content-returning"), false);
 
   switcher.destroy();
   assert.equal(listeners.has("touchstart"), false);
@@ -420,6 +426,171 @@ test("inline and fullscreen galleries share the same edge rubber-band controller
   assert.equal((source.match(/createEdgeRubberBandController\(\{/g) || []).length, 2);
   assert.match(source, /function bindGallery\(gallery, options\)[\s\S]*edgeRubberBand = createEdgeRubberBandController\(\{[\s\S]*getSlides: \(\) => slides/);
   assert.doesNotMatch(source, /\[180, 420\]/);
+});
+
+function edgeFixture(options = {}) {
+  const slides = [slide(0), slide(360), slide(720)];
+  const listeners = new Map(), timers = new Map(), scrolls = [];
+  let timerId = 0, writes = 0, left = options.left ?? 720;
+  const track = {
+    clientWidth: 360, scrollWidth: 1080, classList: classList(),
+    get scrollLeft() { return left; },
+    set scrollLeft(value) { writes++; left = value; },
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type) { listeners.delete(type); },
+    scrollTo(value) { scrolls.push(value); },
+  };
+  const switcher = runtime.createFullscreenSwitcher({
+    root: { classList: classList() }, track, slides, directDesktop: false,
+    initialIndex: options.initialIndex ?? 0, // deliberately behind measured native position
+    setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
+    clearTimeout(id) { timers.delete(id); },
+    ...options,
+  });
+  function emit(type, x = 100, y = 40, extras = {}) {
+    const event = {
+      touches: type === "touchend" || type === "touchcancel" ? [] : [{ clientX: x, clientY: y, identifier: 4 }],
+      cancelable: true, defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+      ...extras,
+    };
+    listeners.get(type)?.(event);
+    return event;
+  }
+  return { switcher, slides, track, emit, listeners, timers, scrolls, writes: () => writes };
+}
+
+test("last edge uses measured position, preserves snap bounds and never wraps or writes scrollLeft", () => {
+  const f = edgeFixture();
+  f.emit("touchstart");
+  assert.equal(f.emit("touchmove", -400).defaultPrevented, true);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "-44px 0px");
+  assert.equal(f.slides[2].style.transform, "");
+  assert.equal(f.slides[2].firstElementChild.style.transform, "scale(1)");
+  assert.equal(f.emit("touchmove", 150).defaultPrevented, true);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "0px 0px");
+  f.emit("touchend");
+  for (const fn of f.timers.values()) fn();
+  assert.equal(f.track.scrollLeft, 720);
+  assert.equal(f.writes(), 0);
+  assert.deepEqual(f.scrolls, []);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "");
+  f.switcher.destroy();
+});
+
+test("first edge, fractional alignment, and a single slide remain bounded", () => {
+  const f = edgeFixture({ left: 0.5 });
+  f.emit("touchstart");
+  f.emit("touchmove", 500);
+  assert.equal(f.slides[0].firstElementChild.style.translate, "44px 0px");
+  f.emit("touchcancel");
+  assert.equal(f.slides[0].firstElementChild.style.translate, "");
+  assert.equal(f.timers.size, 0);
+  const one = edgeFixture({ left: 0, slides: [f.slides[0]] });
+  one.emit("touchstart");
+  one.emit("touchmove", -300);
+  assert.equal(f.slides[0].firstElementChild.style.translate, "-44px 0px");
+  one.switcher.destroy();
+  f.switcher.destroy();
+});
+
+test("edge controller yields permanently to inward, vertical, native and multi-touch gestures", () => {
+  for (const first of [
+    { x: 170, y: 40 }, { x: 100, y: 90 },
+    { x: 30, y: 40, cancelable: false },
+    { x: 30, y: 40, defaultPrevented: true },
+    { x: 30, y: 40, touches: [{ identifier: 4 }, { identifier: 5 }] },
+    { x: 30, y: 40, touches: [{ identifier: 99, clientX: 30, clientY: 40 }] },
+  ]) {
+    const f = edgeFixture();
+    f.emit("touchstart");
+    f.emit("touchmove", first.x, first.y, first);
+    assert.equal(f.emit("touchmove", -100).defaultPrevented, false);
+    f.emit("touchend");
+    assert.equal(f.slides[2].firstElementChild.style.translate, "");
+    assert.equal(f.writes(), 0);
+    assert.equal(f.timers.size, 0);
+    f.switcher.destroy();
+  }
+});
+
+test("native bounce and mid-track positions are never recaptured", () => {
+  for (const left of [745, -20, 340, 705]) {
+    const f = edgeFixture({ left });
+    f.emit("touchstart");
+    f.emit("touchmove", left < 0 ? 300 : -100);
+    assert.ok(f.slides.every((slide) => !slide.firstElementChild.style.translate));
+    assert.equal(f.writes(), 0);
+    f.switcher.destroy();
+  }
+});
+
+test("zoom eligibility changes and pinch cancel captured edges without delayed work", () => {
+  let allowed = false;
+  const f = edgeFixture({ canRubberBand: () => allowed });
+  f.emit("touchstart");
+  f.emit("touchmove", 20);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "");
+  allowed = true;
+  f.emit("touchstart");
+  f.emit("touchmove", 20);
+  allowed = false;
+  f.emit("touchmove", 0);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "");
+  f.emit("touchend");
+  assert.equal(f.timers.size, 0);
+  f.switcher.destroy();
+  assert.equal(f.listeners.size, 0);
+});
+
+test("touch during return resumes the painted offset and stale cleanup cannot reset it", () => {
+  const f = edgeFixture({
+    getComputedStyle(content) {
+      return { translate: content.classList.values.has("vpg-edge-content-returning") ? "-12px 0px" : content.style.translate || "none" };
+    },
+  });
+  f.emit("touchstart");
+  f.emit("touchmove", 0);
+  f.emit("touchend");
+  const stale = [...f.timers.values()][0];
+  f.emit("touchstart");
+  assert.equal(f.slides[2].firstElementChild.style.translate, "-12px 0px");
+  f.emit("touchmove", 75);
+  assert.equal(f.slides[2].firstElementChild.style.translate, "-18px 0px");
+  stale();
+  assert.equal(f.slides[2].firstElementChild.style.translate, "-18px 0px");
+  assert.equal(f.timers.size, 0);
+  f.emit("touchcancel");
+  assert.equal(f.slides[2].firstElementChild.style.translate, "");
+  f.switcher.destroy();
+});
+
+test("slow original loading cannot pull a native swipe back to the requested index", async () => {
+  const f = edgeFixture({ waitForReady: true });
+  const gate = deferred();
+  const pending = f.switcher.activate(0, () => gate.promise, { scroll: false });
+  f.emit("touchstart");
+  f.emit("touchmove", 0);
+  f.emit("touchend");
+  gate.resolve(true);
+  await pending;
+  for (const fn of f.timers.values()) fn();
+  assert.equal(f.track.scrollLeft, 720);
+  assert.equal(f.writes(), 0);
+  assert.deepEqual(f.scrolls, []);
+  f.switcher.destroy();
+});
+
+test("slide positions use track coordinates even with a shared external offset parent", () => {
+  const parent = {};
+  const track = { offsetParent: parent, offsetLeft: 120, clientLeft: 2, clientWidth: 360, scrollWidth: 1080, scrollLeft: 720 };
+  const slides = [122, 482, 842].map((offsetLeft) => ({ offsetLeft, offsetParent: parent, offsetWidth: 360 }));
+  assert.equal(runtime.helpers.resolveSlideLeft(track, slides[2], 2), 720);
+  assert.equal(runtime.helpers.resolveActiveIndex(track, slides), 2);
+  track.scrollLeft = -60;
+  assert.equal(runtime.helpers.resolveActiveIndex(track, slides), 0);
+  track.scrollLeft = 1000;
+  assert.equal(runtime.helpers.resolveActiveIndex(track, slides), 2);
 });
 
 test("safe fullscreen replacement commits only a decoded matching source after paint", async () => {

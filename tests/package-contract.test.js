@@ -13,7 +13,7 @@ const [packageJson, manifest, source, dist] = await Promise.all([
 
 test("package, source, distribution, and manifest identify the same runtime", () => {
   const hash = createHash("sha256").update(dist).digest("hex");
-  assert.equal(packageJson.version, "2.2.0");
+  assert.equal(packageJson.version, "2.2.1");
   assert.equal(manifest.version, packageJson.version);
   assert.equal(manifest.contractVersion, 2);
   assert.equal(manifest.sha256, hash);

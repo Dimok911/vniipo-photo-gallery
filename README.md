@@ -8,6 +8,33 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+### Native touch edge correction (2.2.1)
+
+`capabilities.fullscreenEdgeRubberBand >= 2` preserves native fullscreen swipes.
+The edge controller measures the visible track position, captures only an outward
+cancelable gesture at an aligned edge, and never writes `scrollLeft`. Inward,
+vertical, multi-touch, and already native-owned gestures cannot be recaptured.
+Reversal after capture returns the offset toward zero without handing the same
+gesture to native scrolling. `touchcancel` restores immediately.
+
+Only the slide's first child receives a bounded CSS `translate`; the snap target
+and the child's application-owned `transform` stay fixed. Touching during return
+resumes the computed visual offset. Image replacement strips cloned edge state
+and cancels the old content's effect before committing, including rollback.
+Slides without a child or with non-pixel application `translate` use native edges.
+
+Pass `canRubberBand: () => scale <= 1 && !pinching` to
+`createFullscreenSwitcher` (or inline binding options) to exclude application zoom
+and pan gestures. The callback runs on touch start and move. Contract 2 is
+unchanged. Applications must still provide decoded adjacent previews before a
+native swipe and avoid timer/resize snaps while a finger is down; publishing this
+runtime alone cannot populate empty application slides.
+
+Run `npm test`, `npm run build`, and `npm run test:browser`. Browser tests use
+Playwright WebKit with a mobile viewport and synthesized touch events to verify
+painted return offsets, stable native snap bounds, gesture ownership, and delayed
+image readiness. They are not a physical iPhone or Safari beta certification.
+
 Since 2.2.0, readiness-aware fullscreen presentation belongs to this shared
 runtime. Applications provide their image sources and readiness signals rather
 than duplicating the requested-versus-presented slide state machine.
