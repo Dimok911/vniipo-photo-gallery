@@ -1,11 +1,13 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.2.0";
+  const VERSION = "2.2.1";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
+  const edgePresentations = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
   const fullscreenControlStyleId = "vniipo-photo-gallery-v2-fullscreen-controls";
+  const edgeStyleId = "vniipo-photo-gallery-v2-edge-content";
 
   const defaults = Object.freeze({
     gallery: "[data-photo-gallery]",
@@ -19,13 +21,28 @@
     return Math.min(max, Math.max(min, Number(value) || 0));
   }
 
+  function resolveSlideLeft(track, slide, index = 0) {
+    if (!slide) return 0;
+    const left = Number(slide.offsetLeft);
+    if (Number.isFinite(left)) {
+      if (slide.offsetParent && slide.offsetParent !== track && slide.offsetParent === track?.offsetParent) {
+        return left - (Number(track.offsetLeft) || 0) - (Number(track.clientLeft) || 0);
+      }
+      return left;
+    }
+    return (Number(track?.clientWidth) || 0) * index;
+  }
+
   function resolveActiveIndex(track, slides) {
     if (!track || !slides.length) return 0;
-    const center = track.scrollLeft + track.clientWidth / 2;
+    const maxLeft = Math.max(0, Number.isFinite(Number(track.scrollWidth))
+      ? Number(track.scrollWidth) - track.clientWidth
+      : resolveSlideLeft(track, slides[slides.length - 1], slides.length - 1));
+    const center = clamp(track.scrollLeft, 0, maxLeft) + track.clientWidth / 2;
     let index = 0;
     let distance = Number.POSITIVE_INFINITY;
     slides.forEach((slide, candidate) => {
-      const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
+      const slideCenter = resolveSlideLeft(track, slide, candidate) + (Number(slide.offsetWidth) || track.clientWidth) / 2;
       const nextDistance = Math.abs(slideCenter - center);
       if (nextDistance < distance) {
         distance = nextDistance;
@@ -170,9 +187,6 @@
     const getSlides = typeof options.getSlides === "function"
       ? options.getSlides
       : () => Array.from(options.slides || track?.children || []);
-    const getActiveIndex = typeof options.getActiveIndex === "function"
-      ? options.getActiveIndex
-      : () => 0;
     const scheduleTimer = options.setTimeout || setTimeout;
     const cancelTimer = options.clearTimeout || clearTimeout;
     const resistance = Math.max(0.05, Math.min(0.5, Number(options.resistance) || 0.24));
@@ -180,24 +194,36 @@
     let gesture = null;
     let release = null;
     let destroyed = false;
+    const allowed = (event) => !options.disabled && options.canRubberBand?.(event) !== false;
+    const computedStyle = options.getComputedStyle || ((element) => element?.ownerDocument?.defaultView?.getComputedStyle?.(element));
+    const doc = track?.ownerDocument;
+    if (!options.disabled && doc?.head && doc.createElement && !doc.getElementById?.(edgeStyleId)) {
+      const style = doc.createElement("style");
+      style.id = edgeStyleId;
+      style.textContent = ".vpg-edge-content-dragging{will-change:translate;transition:none!important}.vpg-edge-content-returning{will-change:translate;transition:translate 180ms cubic-bezier(.22,.8,.32,1)!important}";
+      doc.head.appendChild(style);
+    }
 
-    function slideLeft(slide, index) {
-      return Number.isFinite(Number(slide?.offsetLeft))
-        ? Number(slide.offsetLeft)
-        : Number(track?.clientWidth || 0) * index;
+    function translation(element) {
+      const value = computedStyle(element)?.translate || element?.style?.translate || "none";
+      if (value === "none") return { x: 0, y: 0 };
+      const parts = value.trim().split(/\s+/);
+      if (!parts.every((part) => /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:px)?$/.test(part))) return null;
+      return { x: Number.parseFloat(parts[0]) || 0, y: Number.parseFloat(parts[1]) || 0 };
     }
 
     function restore(state) {
-      const slide = state?.slide;
-      if (!slide) return;
-      slide.classList?.remove("vpg-edge-rubber-band-dragging", "vpg-edge-rubber-band-returning");
-      if (!slide.style) return;
-      if (state.previousTransform) slide.style.transform = state.previousTransform;
-      else slide.style.removeProperty?.("transform");
+      const content = state?.content;
+      if (!content) return;
+      edgePresentations.delete(content);
+      content.classList?.remove("vpg-edge-content-dragging", "vpg-edge-content-returning");
+      if (!content.style) return;
+      if (state.previousTranslate) content.style.translate = state.previousTranslate;
+      else content.style.removeProperty?.("translate");
     }
 
     function clear() {
-      if (release?.timer) cancelTimer(release.timer);
+      if (release) cancelTimer(release.timer);
       restore(release);
       restore(gesture);
       release = null;
@@ -208,13 +234,13 @@
       const ended = gesture;
       gesture = null;
       if (!ended) return false;
-      if (!ended.moved || !ended.slide?.style) {
+      if (!ended.moved || !ended.content?.style) {
         restore(ended);
         return false;
       }
-      ended.slide.classList?.remove("vpg-edge-rubber-band-dragging");
-      ended.slide.classList?.add("vpg-edge-rubber-band-returning");
-      ended.slide.style.transform = ended.previousTransform || "translate3d(0,0,0)";
+      ended.content.classList?.remove("vpg-edge-content-dragging");
+      ended.content.classList?.add("vpg-edge-content-returning");
+      ended.content.style.translate = `${ended.base.x}px ${ended.base.y}px`;
       const pending = { ...ended, timer: 0 };
       pending.timer = scheduleTimer(() => {
         if (release !== pending) return;
@@ -226,13 +252,22 @@
     }
 
     const onTouchStart = (event) => {
+      const returning = release;
+      const rendered = returning ? translation(returning.content) : null;
       clear();
-      if (destroyed || options.disabled || event.touches?.length !== 1) return;
+      if (destroyed || !allowed(event) || event.touches?.length !== 1) return;
       const slides = getSlides();
       if (!slides.length) return;
-      const index = clamp(getActiveIndex(), 0, slides.length - 1);
+      // Requested/app indices can lag a native swipe or point at a still-loading image.
+      const index = resolveActiveIndex(track, slides);
       const slide = slides[index];
-      const left = slideLeft(slide, index);
+      // Move content, never the snap target. Transforming the slide changes its
+      // snap area and lets the browser snap while a return animation is running.
+      const content = slide?.firstElementChild;
+      if (!content?.style) return;
+      const base = translation(content);
+      if (!base) return;
+      const left = resolveSlideLeft(track, slide, index);
       const aligned = Math.abs((Number(track?.scrollLeft) || 0) - left) <= 2;
       const atStart = aligned && index === 0;
       const atEnd = aligned && index === slides.length - 1;
@@ -241,29 +276,57 @@
         side: atStart && atEnd ? "both" : atStart ? "start" : "end",
         startX: Number(event.touches[0].clientX) || 0,
         startY: Number(event.touches[0].clientY) || 0,
-        previousTransform: slide?.style?.transform || "",
+        identifier: event.touches[0].identifier,
+        previousTranslate: content.style.translate || "",
+        content,
+        base,
+        initialOffset: returning?.content === content && rendered ? rendered.x - base.x : 0,
         slide,
         left,
         moved: false,
       };
+      edgePresentations.set(content, { previousTranslate: gesture.previousTranslate, clear });
+      if (gesture.initialOffset) {
+        content.classList?.add("vpg-edge-content-dragging");
+        content.style.translate = `${base.x + gesture.initialOffset}px ${base.y}px`;
+        gesture.moved = true;
+      }
     };
     const onTouchMove = (event) => {
-      if (!gesture || event.touches?.length !== 1) return;
-      const dx = (Number(event.touches[0].clientX) || 0) - gesture.startX;
-      const dy = (Number(event.touches[0].clientY) || 0) - gesture.startY;
+      if (!gesture) return;
+      // Never add a second motion once Safari or the application's zoom owns it.
+      if (event.touches?.length !== 1 || !allowed(event) || event.cancelable === false || event.defaultPrevented) {
+        clear();
+        return;
+      }
+      const point = Array.from(event.touches).find((touch) => touch.identifier === gesture.identifier);
+      if (!point) { clear(); return; }
+      const dx = (Number(point.clientX) || 0) - gesture.startX;
+      const dy = (Number(point.clientY) || 0) - gesture.startY;
       const outward = gesture.side === "both" || (gesture.side === "start" ? dx > 0 : dx < 0);
-      if (!outward || Math.abs(dx) <= Math.abs(dy) * 1.05) return;
+      if (!gesture.moved) {
+        if (Math.hypot(dx, dy) < 7) return;
+        if (!outward || Math.abs(dx) <= Math.abs(dy) * 1.05
+          || Math.abs((Number(track?.scrollLeft) || 0) - gesture.left) > 2) {
+          clear();
+          return;
+        }
+      }
+      // After capture, reversal belongs to this gesture until release. Handing it
+      // back midway causes a native jump while the old transform is still painted.
       event.preventDefault?.();
-      track.scrollLeft = gesture.left;
-      const offset = Math.sign(dx) * Math.min(maxOffset, Math.abs(dx) * resistance);
-      gesture.slide?.classList?.add("vpg-edge-rubber-band-dragging");
-      if (gesture.slide?.style) gesture.slide.style.transform = `translate3d(${offset}px,0,0)`;
+      const requestedOffset = gesture.initialOffset + dx * resistance;
+      const offset = gesture.side === "start" ? clamp(requestedOffset, 0, maxOffset)
+        : gesture.side === "end" ? clamp(requestedOffset, -maxOffset, 0)
+        : clamp(requestedOffset, -maxOffset, maxOffset);
+      gesture.content.classList?.add("vpg-edge-content-dragging");
+      gesture.content.style.translate = `${gesture.base.x + offset}px ${gesture.base.y}px`;
       gesture.moved = true;
     };
     const onTouchEnd = (event) => {
       if (finish()) event.preventDefault?.();
     };
-    const onTouchCancel = () => finish();
+    const onTouchCancel = () => clear();
 
     track?.addEventListener?.("touchstart", onTouchStart, { passive: true });
     track?.addEventListener?.("touchmove", onTouchMove, { passive: false });
@@ -375,9 +438,7 @@
     function activeSlideLeft() {
       const slide = slides[activeIndex];
       if (!slide) return 0;
-      return Number.isFinite(Number(slide.offsetLeft))
-        ? Number(slide.offsetLeft)
-        : Number(track?.clientWidth || 0) * activeIndex;
+      return resolveSlideLeft(track, slide, activeIndex);
     }
 
     function scrollActiveIntoPlace(behavior = "auto", force = false) {
@@ -401,6 +462,8 @@
       slides,
       getActiveIndex: () => activeIndex,
       disabled: directDesktop,
+      canRubberBand: options.canRubberBand,
+      getComputedStyle: options.getComputedStyle,
       resistance: options.edgeResistance,
       maxOffset: options.edgeMaxOffset,
       setTimeout: options.setTimeout,
@@ -586,6 +649,19 @@
     if (!replacement || replacement === currentImage) {
       throw new Error("fullscreen-image-replacement-must-be-detached");
     }
+    // cloneNode copies transient edge classes/styles. The detached replacement
+    // must start at the application's baseline even if decode outlives the drag.
+    const edgePresentation = edgePresentations.get(currentImage);
+    const clonedEdge = replacement.classList?.contains?.("vpg-edge-content-dragging")
+      || replacement.classList?.contains?.("vpg-edge-content-returning");
+    replacement.classList?.remove("vpg-edge-content-dragging", "vpg-edge-content-returning");
+    if ((edgePresentation || clonedEdge) && replacement.style) {
+      // Adapters can pre-create the clone during decode and hand it back after
+      // the old edge controller has already restored and forgotten the gesture.
+      const baseline = edgePresentation ? edgePresentation.previousTranslate : currentImage.style?.translate;
+      if (baseline) replacement.style.translate = baseline;
+      else replacement.style.removeProperty?.("translate");
+    }
     replacement.removeAttribute?.("src");
     replacement.removeAttribute?.("srcset");
     replacement.removeAttribute?.("sizes");
@@ -601,6 +677,7 @@
       throw new Error("fullscreen-image-replacement-superseded");
     }
     throwIfFullscreenAborted(signal);
+    edgePresentations.get(currentImage)?.clear();
     currentImage.replaceWith(replacement);
     try {
       await onReplaced(replacement, { currentImage, src, signal });
@@ -973,7 +1050,7 @@
         scrollFrame = 0;
         const measuredIndex = resolveActiveIndex(track, slides);
         const target = pendingScrollIndex === null ? null : slides[pendingScrollIndex];
-        const reachedTarget = Boolean(target) && Math.abs(track.scrollLeft - target.offsetLeft) <= 1;
+        const reachedTarget = Boolean(target) && Math.abs(track.scrollLeft - resolveSlideLeft(track, target, pendingScrollIndex)) <= 1;
         const resolved = resolveNavigationIndex(pendingScrollIndex, measuredIndex, reachedTarget);
         pendingScrollIndex = resolved.pendingIndex;
         updateDots(resolved.activeIndex);
@@ -987,7 +1064,7 @@
       cancelPendingScroll();
       pendingScrollIndex = behavior === "smooth" ? next : null;
       updateDots(next);
-      track.scrollTo({ left: slide.offsetLeft, behavior });
+      track.scrollTo({ left: resolveSlideLeft(track, slide, next), behavior });
       scrollTimer = setTimeout(() => {
         scrollTimer = 0;
         pendingScrollIndex = null;
@@ -1019,6 +1096,8 @@
       track,
       getSlides: () => slides,
       getActiveIndex: () => activeIndex,
+      canRubberBand: options.canRubberBand,
+      getComputedStyle: options.getComputedStyle,
       resistance: options.edgeResistance,
       maxOffset: options.edgeMaxOffset,
       setTimeout: options.setTimeout,
@@ -1192,7 +1271,7 @@
       fullscreenControlStyles: 1,
       fullscreenImagePresentation: 1,
       fullscreenEdgeSettling: 2,
-      fullscreenEdgeRubberBand: 1,
+      fullscreenEdgeRubberBand: 2,
       readyFullscreenNavigation: 1,
     }),
     bindInlineGalleries,
@@ -1209,6 +1288,7 @@
       clamp,
       isDirectDesktop,
       resolveActiveIndex,
+      resolveSlideLeft,
       resolveNavigationIndex,
       resolveFullscreenImagePresentation,
       resolveSwipe,
