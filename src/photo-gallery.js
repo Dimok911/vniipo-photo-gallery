@@ -652,9 +652,14 @@
     // cloneNode copies transient edge classes/styles. The detached replacement
     // must start at the application's baseline even if decode outlives the drag.
     const edgePresentation = edgePresentations.get(currentImage);
+    const clonedEdge = replacement.classList?.contains?.("vpg-edge-content-dragging")
+      || replacement.classList?.contains?.("vpg-edge-content-returning");
     replacement.classList?.remove("vpg-edge-content-dragging", "vpg-edge-content-returning");
-    if (edgePresentation && replacement.style) {
-      if (edgePresentation.previousTranslate) replacement.style.translate = edgePresentation.previousTranslate;
+    if ((edgePresentation || clonedEdge) && replacement.style) {
+      // Adapters can pre-create the clone during decode and hand it back after
+      // the old edge controller has already restored and forgotten the gesture.
+      const baseline = edgePresentation ? edgePresentation.previousTranslate : currentImage.style?.translate;
+      if (baseline) replacement.style.translate = baseline;
       else replacement.style.removeProperty?.("translate");
     }
     replacement.removeAttribute?.("src");

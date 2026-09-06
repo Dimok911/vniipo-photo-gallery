@@ -11,7 +11,7 @@ async function setup(page) {
   </style><div class="root"><div class="track">${['red','green','blue'].map(color =>
     `<div class="slide"><img src="data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500"><rect width="400" height="500" fill="${color}"/></svg>`)}"></div>`
   ).join('')}</div></div>`);
-  await page.addScriptTag({ content: runtime });
+  await page.addScriptTag(process.env.GALLERY_RUNTIME_URL ? { url: process.env.GALLERY_RUNTIME_URL } : { content: runtime });
   await page.evaluate(async () => {
     window.track = document.querySelector('.track');
     window.slides = [...track.children];
@@ -129,3 +129,24 @@ for (const phase of ['drag', 'return']) {
     expect(result.index).toBe(2);
   });
 }
+
+test('a clone decoded after edge cleanup restores its application baseline', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => {
+    const old = slides[2].firstElementChild;
+    old.style.translate = '3px 2px';
+    touch('touchstart'); touch('touchmove', -100);
+    window.precreated = old.cloneNode(false);
+    touch('touchend');
+  });
+  await page.waitForTimeout(300);
+  const result = await page.evaluate(async () => {
+    const old = slides[2].firstElementChild;
+    await VniipoPhotoGallery.replaceFullscreenImageSource(old, old.src, {
+      createReplacement: () => precreated,
+    });
+    return { translate: slides[2].firstElementChild.style.translate, classes: slides[2].firstElementChild.className };
+  });
+  expect(result.translate).toBe('3px 2px');
+  expect(result.classes).not.toContain('vpg-edge');
+});
