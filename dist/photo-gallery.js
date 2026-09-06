@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.1.7";
+  const VERSION = "2.2.0";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const styleId = "vniipo-photo-gallery-v2-styles";
@@ -290,6 +290,10 @@
     const slides = Array.from(options.slides || track?.children || []);
     const directDesktop = options.directDesktop ?? isDirectDesktop(options.windowRef || global);
     let activeIndex = clamp(options.initialIndex, 0, Math.max(0, slides.length - 1));
+    let presentedIndex = activeIndex;
+    let presentationGeneration = 0;
+    let presentationController = null;
+    const waitForReady = options.waitForReady === true;
     let destroyed = false;
     let edgeRubberBand = null;
 
@@ -301,21 +305,71 @@
     track?.classList?.add("vpg-fullscreen-track");
     slides.forEach((slide) => slide.classList?.add("vpg-fullscreen-slide"));
 
-    function render(index, notify = true) {
-      if (destroyed) return activeIndex;
-      const previousIndex = activeIndex;
-      activeIndex = clamp(index, 0, Math.max(0, slides.length - 1));
-      if (activeIndex !== previousIndex) edgeRubberBand?.clear();
+    function renderPresentation() {
       slides.forEach((slide, candidate) => {
-        const active = candidate === activeIndex;
+        const active = candidate === presentedIndex;
         slide.classList?.toggle("vpg-fullscreen-active", active);
         if (directDesktop) slide.setAttribute?.("aria-hidden", active ? "false" : "true");
         else slide.removeAttribute?.("aria-hidden");
       });
+    }
+
+    function cancelPresentation() {
+      presentationGeneration += 1;
+      presentationController?.abort();
+      presentationController = null;
+    }
+
+    function render(index, notify = true) {
+      if (destroyed) return activeIndex;
+      const previousIndex = activeIndex;
+      activeIndex = clamp(index, 0, Math.max(0, slides.length - 1));
+      if (activeIndex !== previousIndex) {
+        cancelPresentation();
+        edgeRubberBand?.clear();
+      }
+      if (!directDesktop || !waitForReady) presentedIndex = activeIndex;
+      renderPresentation();
       if (notify && typeof options.onActiveIndexChange === "function") {
         options.onActiveIndexChange({ root, track, slides, index: activeIndex, directDesktop });
       }
       return activeIndex;
+    }
+
+    // The application resolves/decodes/sizes its image; the shared switcher
+    // owns retention of the last bitmap, latest-request wins, and disposal.
+    // render/goTo/resize cannot expose an unready desktop slide in this mode.
+    async function activate(index, prepare, { behavior = "smooth", notify = true, scroll = true } = {}) {
+      if (destroyed || !slides.length) return false;
+      render(index, notify);
+      cancelPresentation();
+      const generation = presentationGeneration;
+      const requestedIndex = activeIndex;
+      const controller = createAbortController();
+      presentationController = controller;
+      if (scroll) scrollActiveIntoPlace(behavior);
+      let ready = false;
+      try {
+        ready = typeof prepare === "function" && await prepare({
+          index: requestedIndex,
+          slide: slides[requestedIndex],
+          signal: controller.signal,
+        }) === true;
+      } catch (error) {
+        if (!controller.signal.aborted && typeof options.onPresentationError === "function") {
+          options.onPresentationError(error, { index: requestedIndex });
+        }
+      }
+      if (destroyed || controller.signal.aborted || generation !== presentationGeneration) return false;
+      presentationController = null;
+      if (!ready) return false;
+      const previousIndex = presentedIndex;
+      presentedIndex = requestedIndex;
+      renderPresentation();
+      if (typeof options.onPresented === "function") {
+        options.onPresented({ index: presentedIndex, previousIndex, slide: slides[presentedIndex] });
+      }
+      return true;
     }
 
     function activeSlideLeft() {
@@ -356,6 +410,7 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
+      cancelPresentation();
       edgeRubberBand?.destroy();
       root?.classList?.remove("vpg-fullscreen", "vpg-direct-desktop");
       track?.classList?.remove("vpg-fullscreen-track");
@@ -369,6 +424,8 @@
     return {
       directDesktop,
       get activeIndex() { return activeIndex; },
+      get presentedIndex() { return presentedIndex; },
+      activate,
       goTo,
       render,
       settle: () => scrollActiveIntoPlace("auto", true),
@@ -1037,14 +1094,19 @@
       }
       if (gesture.moved) {
         suppressClickUntil = Date.now() + 600;
-        scrollToIndex(resolveActiveIndex(track, slides));
+        if (!gesture.vertical) scrollToIndex(resolveActiveIndex(track, slides));
       }
     }, { passive: false });
 
     listen(track, "touchcancel", () => {
+      const canceled = touch;
       touch = null;
       suppressClickUntil = Date.now() + 300;
-      scrollToIndex(resolveActiveIndex(track, slides));
+      if (!canceled) return;
+      const gesture = resolveSwipe(
+        canceled.x, canceled.y, canceled.lastX, canceled.lastY, options.swipeThreshold,
+      );
+      if (!gesture.vertical) scrollToIndex(resolveActiveIndex(track, slides));
     }, { passive: true });
 
     dots.forEach((dot) => {
@@ -1131,6 +1193,7 @@
       fullscreenImagePresentation: 1,
       fullscreenEdgeSettling: 2,
       fullscreenEdgeRubberBand: 1,
+      readyFullscreenNavigation: 1,
     }),
     bindInlineGalleries,
     createFullscreenSourceController,

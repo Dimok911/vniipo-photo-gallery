@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.1.7");
+  assert.equal(runtime.version, "2.2.0");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);
@@ -22,6 +22,7 @@ test("publishes a stable contract and reusable API", () => {
   assert.equal(runtime.capabilities.fullscreenImagePresentation, 1);
   assert.equal(runtime.capabilities.fullscreenEdgeSettling, 2);
   assert.equal(runtime.capabilities.fullscreenEdgeRubberBand, 1);
+  assert.equal(runtime.capabilities.readyFullscreenNavigation, 1);
   assert.equal(typeof runtime.bindInlineGalleries, "function");
   assert.equal(typeof runtime.createFullscreenSourceController, "function");
   assert.equal(typeof runtime.createFullscreenSwitcher, "function");
@@ -186,7 +187,7 @@ test("2.0.1 exposes bounded inertia and contains thumbnail images", () => {
 
 test("2.0.1 settles moved and cancelled touch gestures on a real slide", () => {
   assert.match(source, /if \(gesture\.moved\) \{[\s\S]{0,160}scrollToIndex\(resolveActiveIndex\(track, slides\)\)/);
-  assert.match(source, /listen\(track, "touchcancel"[\s\S]{0,180}scrollToIndex\(resolveActiveIndex\(track, slides\)\)/);
+  assert.match(source, /listen\(track, "touchcancel"[\s\S]{0,500}if \(!gesture\.vertical\) scrollToIndex\(resolveActiveIndex\(track, slides\)\)/);
 });
 
 const classList = () => {
@@ -250,6 +251,104 @@ test("fullscreen switcher retains native mobile scrolling", () => {
   });
   switcher.goTo(1, "smooth");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ left: 360, behavior: "smooth" }]);
+});
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
+function readySwitcher(directDesktop = true) {
+  const slides = [slide(0), slide(360), slide(720)];
+  const scrolls = [];
+  const presented = [];
+  const switcher = runtime.createFullscreenSwitcher({
+    root: { classList: classList() }, slides,
+    track: { classList: classList(), scrollTo(value) { scrolls.push(value); } },
+    directDesktop, waitForReady: true,
+    onPresented: ({ index }) => presented.push(index),
+  });
+  return { switcher, slides, scrolls, presented };
+}
+
+test("ready desktop navigation keeps one presented slide through load, resize, and commit", async () => {
+  const { switcher, slides, presented } = readySwitcher();
+  const gate = deferred();
+  const activation = switcher.activate(1, () => gate.promise);
+  assert.equal(switcher.activeIndex, 1);
+  assert.equal(switcher.presentedIndex, 0);
+  switcher.render(1, false);
+  switcher.goTo(1, "auto", false);
+  switcher.settle();
+  assert.equal(slides[0].classList.values.has("vpg-fullscreen-active"), true);
+  assert.equal(slides[1].attributes.get("aria-hidden"), "true");
+  gate.resolve(true);
+  assert.equal(await activation, true);
+  assert.equal(switcher.presentedIndex, 1);
+  assert.equal(slides[1].classList.values.has("vpg-fullscreen-active"), true);
+  assert.deepEqual(presented, [1]);
+});
+
+test("ready navigation rejects skipped, failed, and same-index stale completions", async () => {
+  const { switcher, presented } = readySwitcher();
+  const first = deferred(), second = deferred();
+  let signal;
+  const stale = switcher.activate(1, (request) => { signal = request.signal; return first.promise; });
+  const latest = switcher.activate(2, () => second.promise);
+  assert.equal(signal.aborted, true);
+  first.resolve(true);
+  assert.equal(await stale, false);
+  assert.equal(switcher.presentedIndex, 0);
+  second.resolve(true);
+  assert.equal(await latest, true);
+  assert.equal(await switcher.activate(1, () => false), false);
+  assert.equal(await switcher.activate(1, () => { throw Error("offline"); }), false);
+  assert.equal(switcher.presentedIndex, 2);
+  const retry = deferred();
+  const oldRetry = switcher.activate(1, () => retry.promise);
+  assert.equal(await switcher.activate(1, () => true), true);
+  retry.resolve(true);
+  assert.equal(await oldRetry, false);
+  assert.deepEqual(presented, [2, 1]);
+});
+
+test("ready navigation cancels on a changed selection and on destroy", async () => {
+  const { switcher, presented } = readySwitcher();
+  const first = deferred();
+  const activation = switcher.activate(1, () => first.promise);
+  switcher.render(2);
+  first.resolve(true);
+  assert.equal(await activation, false);
+  const last = deferred();
+  let signal;
+  const closing = switcher.activate(2, (request) => { signal = request.signal; return last.promise; });
+  switcher.destroy();
+  assert.equal(signal.aborted, true);
+  last.resolve(true);
+  assert.equal(await closing, false);
+  assert.deepEqual(presented, []);
+});
+
+test("ready navigation never delays native mobile scrolling", async () => {
+  const { switcher, scrolls } = readySwitcher(false);
+  const gate = deferred();
+  const activation = switcher.activate(1, () => gate.promise);
+  assert.equal(switcher.presentedIndex, 1);
+  assert.equal(scrolls[0].left, 360);
+  assert.equal(scrolls[0].behavior, "smooth");
+  gate.resolve(true);
+  assert.equal(await activation, true);
+  assert.equal(scrolls.length, 1);
+});
+
+test("ready navigation lets adapters own native scrolling without a duplicate snap", async () => {
+  const { switcher, scrolls } = readySwitcher(false);
+  assert.equal(await switcher.activate(1, () => true, { scroll: false, notify: false }), true);
+  assert.equal(switcher.presentedIndex, 1);
+  assert.equal(scrolls.length, 0);
+  switcher.goTo(1, "smooth", false);
+  assert.equal(scrolls.length, 1);
 });
 
 test("fullscreen switcher rubber-bands only an outward edge drag and leaves normal swipes native", () => {
