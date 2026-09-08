@@ -8,6 +8,70 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+### Interruptible controlled touch paging (2.3.0)
+
+Opt in with `touchPaging: "controlled"`, `directDesktop: false`, and negotiate
+`capabilities.controlledTouchPaging >= 1`. Native touch scrolling remains the
+default for every other consumer. This mode avoids platform momentum entirely:
+the track uses `overflow: hidden`, `touch-action: none`, no scroll snapping, and
+no native smooth scrolling. Inline important policies override consumer CSS and
+their previous values/priorities are restored on destroy.
+
+The shared runtime drags and settles the existing image strip using synchronous
+`scrollLeft` updates and a cancellable animation frame loop. It does not replace,
+load, or resize images. A short fast flick advances one slide; an individual drag
+cannot skip more than one slide or wrap. The shared content edge effect retains
+its bounded resistance, with its return driven by the same cancellable loop.
+Reduced motion makes settling immediate.
+
+Every new `touchstart`, including a new two-finger gesture **after releasing a
+swipe while its settle is still running**, cancels motion in capture phase before
+application bubble handlers. Adding a second finger during a held drag also
+hands control to the application. The application owns pinch, pan, image sources,
+and when to align the visible slide for pinch; call `goTo(index, "instant")` for
+that synchronous alignment. No constructor callback is emitted.
+
+```js
+const switcher = VniipoPhotoGallery.createFullscreenSwitcher({
+  root, track, slides, initialIndex: 0, directDesktop: false,
+  touchPaging: "controlled",
+  canTouchPage: () => scale <= 1 && !pinching,
+  onTouchPagingStart({ index, position, event }) { cancelAppSettleTimers(); },
+  onTouchPagingPosition({ index, position, dragging, settling }) { updateDots(index); },
+  onTouchPagingSettle({ index, position }) { prepareSelectedPhoto(index); },
+});
+switcher.goTo(1, "smooth"); // cancellable, including programmatic navigation
+switcher.stopTouchPaging(); // stop at the currently painted position, no snap
+switcher.goTo(switcher.activeIndex, "instant"); // cancel and align synchronously
+```
+
+`index`/`activeIndex` follow the nearest visible slide, not an animation's future
+destination. `position` is logical pixels along the track and includes bounded
+edge overshoot; physical `track.scrollLeft` stays clamped. `isSettling` is true
+only during the shared animation. All callbacks are synchronous and never wait
+for image readiness. `goTo` returns its clamped requested target; `auto` and
+`instant` are immediate. `notify: false` (third positional argument of `goTo`)
+suppresses the legacy `onActiveIndexChange`, not the paging lifecycle callbacks.
+Consumer callbacks must not unconditionally call `goTo` again from `Settle`.
+
+Adapters must disable their native scrollend/timer/touch navigation paths in this
+mode, retain prepared adjacent previews, and avoid bitmap/source/size changes
+while dragging or settling. A synchronous Settle may occur before the consumer's
+bubble touchend handler, especially with reduced motion; adapters can defer their
+own loading work until their gesture state is cleared. `stopTouchPaging` emits
+no settle notification. Destroy cancels all pending frames and listeners.
+Before a new touch, stop, or `goTo`, a consumer's external `scrollLeft` change
+greater than one pixel is adopted as the current position. This supports proxy
+drags on controls outside the track. Logical edge overshoot is retained when the
+DOM still matches the controlled position; never enable native momentum for a
+proxy drag, and cancel an existing animation before writing its position.
+
+Motivation: WebKit intentionally suppresses DOM touches that interrupt platform
+momentum ([WebKit 174300](https://bugs.webkit.org/show_bug.cgi?id=174300)).
+The workaround avoids that momentum; synthetic browser regression tests cannot
+certify physical iPhone behavior. The native default and desktop readiness
+contract from 2.2 remain available.
+
 ### Native touch edge correction (2.2.1)
 
 `capabilities.fullscreenEdgeRubberBand >= 2` preserves native fullscreen swipes.
