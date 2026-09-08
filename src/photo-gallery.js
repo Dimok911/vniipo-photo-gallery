@@ -473,7 +473,12 @@
       const target = fast || far ? ended.index + direction : nearest();
       goTo(clamp(target, Math.max(0, ended.index - 1), Math.min(last(), ended.index + 1)), "smooth");
     };
-    const cancel = () => { const index = stop(); goTo(index, "auto"); };
+    const cancel = () => {
+      // A pinch already owns the gesture after multitouch takeover. Its cancel
+      // must not snap the track or emit a spurious paging Settle callback.
+      if (!gesture && !settling) return;
+      const index = stop(); goTo(index, "auto");
+    };
     const click = (event) => {
       if (!suppressClick) return;
       suppressClick = false; event.preventDefault?.(); event.stopImmediatePropagation?.();

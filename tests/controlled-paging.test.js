@@ -134,6 +134,9 @@ test('zoom and vertical gestures do not page, and remaining pinch finger stays w
   f.emit('touchstart', 0, { touches: [{identifier:1},{identifier:2}] });
   f.emit('touchend', 0, { touches: [{identifier:1}] }); f.emit('touchmove', -100);
   assert.equal(f.track.scrollLeft, 0);
+  const settles = f.settled.length;
+  f.emit('touchcancel');
+  assert.equal(f.settled.length, settles);
   f.switcher.destroy();
 });
 
