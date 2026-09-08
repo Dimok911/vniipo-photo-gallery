@@ -123,6 +123,21 @@ test('long drags cannot skip more than one slide or wrap', () => {
   f.switcher.destroy();
 });
 
+test('external control drag is adopted before goTo or a new touch without losing edge offsets', () => {
+  const f = fixture();
+  f.track.scrollLeft = 450;
+  f.switcher.goTo(2, 'smooth');
+  assert.equal(f.switcher.position, 450);
+  f.advance(50);
+  assert.ok(f.switcher.position > 450);
+  f.track.scrollLeft = 150;
+  f.emit('touchstart');
+  assert.equal(f.starts.at(-1).position, 150);
+  f.advance(20); f.emit('touchmove', 180);
+  assert.equal(f.track.scrollLeft, 170);
+  f.switcher.destroy();
+});
+
 test('zoom and vertical gestures do not page, and remaining pinch finger stays with app', () => {
   let allowed = false;
   const f = fixture({ canTouchPage: () => allowed });

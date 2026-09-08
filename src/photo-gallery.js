@@ -401,6 +401,14 @@
       frame = null;
       settling = false;
       gesture = null;
+      // A consumer can proxy a drag from navigation controls outside the track.
+      // Adopt an actual external scroll write, but preserve logical edge offset
+      // when physical scrollLeft still equals our own clamped painted position.
+      const actual = clamp(track.scrollLeft, 0, max());
+      if (Math.abs(actual - clamp(position, 0, max())) > 1) {
+        position = actual;
+        edge.clear();
+      }
       return nearest();
     }
     function goTo(index, behavior = "smooth", notify = true) {

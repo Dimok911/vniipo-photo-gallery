@@ -60,6 +60,11 @@ while dragging or settling. A synchronous Settle may occur before the consumer's
 bubble touchend handler, especially with reduced motion; adapters can defer their
 own loading work until their gesture state is cleared. `stopTouchPaging` emits
 no settle notification. Destroy cancels all pending frames and listeners.
+Before a new touch, stop, or `goTo`, a consumer's external `scrollLeft` change
+greater than one pixel is adopted as the current position. This supports proxy
+drags on controls outside the track. Logical edge overshoot is retained when the
+DOM still matches the controlled position; never enable native momentum for a
+proxy drag, and cancel an existing animation before writing its position.
 
 Motivation: WebKit intentionally suppresses DOM touches that interrupt platform
 momentum ([WebKit 174300](https://bugs.webkit.org/show_bug.cgi?id=174300)).
