@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.4.0";
+  const VERSION = "2.4.1";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const edgePresentations = new WeakMap();
@@ -403,8 +403,9 @@
     const edgeLimit = clamp(options.edgeMaxOffset ?? 44, 12, 72);
     let position = leftAt(clamp(options.initialIndex, 0, last()));
     let frame = null, generation = 0, gesture = null, settling = false, destroyed = false;
-    let suppressClick = false, pending = false;
+    let suppressClick = false, pending = false, compositorAnimation = null, compositorSample = null;
     const nearest = () => {
+      if (compositorSample) position = compositorSample();
       let index = 0, distance = Infinity;
       slides.forEach((slide, i) => {
         const next = Math.abs(leftAt(i) - position);
@@ -415,8 +416,8 @@
     function paint(value, notify = true) {
       const token = generation;
       position = value;
-      if (fractional) strip.style.setProperty("transform", `translate3d(${-position}px, 0, 0)`, "important");
-      else {
+      if (fractional && !compositorAnimation) strip.style.setProperty("transform", `translate3d(${-position}px, 0, 0)`, "important");
+      else if (!fractional) {
         track.scrollLeft = clamp(position, 0, max());
         edge.setOffset(position < 0 ? 0 : last(), position < 0 ? -position : position > max() ? max() - position : 0);
       }
@@ -437,6 +438,14 @@
     }
     function stop() {
       const token = ++generation;
+      if (compositorAnimation) {
+        // Sample the displayed transform only at takeover. The compositor may
+        // have advanced while JavaScript (and the dot callbacks) was delayed.
+        const transform = win.getComputedStyle(strip).transform;
+        position = -new win.DOMMatrixReadOnly(transform).m41;
+        strip.style.setProperty("transform", transform, "important");
+        compositorAnimation.cancel(); compositorAnimation = null; compositorSample = null;
+      }
       if (frame !== null) caf(frame);
       frame = null;
       settling = false;
@@ -468,6 +477,10 @@
       const target = clamp(index, 0, last()), to = leftAt(target), from = position;
       const reduced = options.reducedMotion ?? win.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
       const finish = () => {
+        if (compositorAnimation) {
+          strip.style.setProperty("transform", `translate3d(${-to}px,0,0)`, "important");
+          compositorAnimation.cancel(); compositorAnimation = null; compositorSample = null;
+        }
         settling = false; frame = null;
         paint(to, notify);
         if (token === generation && !destroyed) options.onTouchPagingSettle?.({ index: target, position });
@@ -484,13 +497,28 @@
         : clamp(distance / Math.max(0.8, speed) * 1.4, 70, 220);
       const slope = releaseVelocity === null || from < 0 || from > max()
         ? 2.5 : clamp(speed * duration / distance, 0, 2.5);
+      const ease = t => slope * t + (3 - 2 * slope) * t * t + (slope - 2) * t * t * t;
       const started = now();
+      if (fractional && typeof strip.animate === "function" && typeof win.DOMMatrixReadOnly === "function") {
+        const fromTransform = `translate3d(${-from}px,0,0)`, toTransform = `translate3d(${-to}px,0,0)`;
+        // Inline !important wins over WAAPI. Temporarily lower our own value;
+        // stop/finish restores its priority before cancelling the animation.
+        strip.style.setProperty("transform", fromTransform);
+        compositorAnimation = strip.animate([{transform:fromTransform},{transform:toTransform}], {
+          duration, easing:`cubic-bezier(${1/3},${slope/3},${2/3},1)`, fill:"both"
+        });
+        // Avoid waiting an extra rendering opportunity for a pending start.
+        if (typeof doc.timeline?.currentTime === "number") compositorAnimation.startTime = doc.timeline.currentTime;
+        compositorSample = () => {
+          const t = clamp(Number(compositorAnimation.currentTime || 0) / duration, 0, 1);
+          return from + (to - from) * ease(t);
+        };
+      }
       const step = () => {
         if (destroyed || token !== generation) return;
-        const progress = clamp((now() - started) / duration, 0, 1);
+        const progress = clamp((compositorAnimation ? Number(compositorAnimation.currentTime || 0) : now() - started) / duration, 0, 1);
         if (progress >= 1) { finish(); return; }
-        const eased = slope * progress + (3 - 2 * slope) * progress ** 2 + (slope - 2) * progress ** 3;
-        paint(from + (to - from) * eased, notify);
+        paint(from + (to - from) * ease(progress), notify);
         if (!destroyed && token === generation) frame = raf(step);
       };
       frame = raf(step);
@@ -498,6 +526,38 @@
     }
     const allowed = (event) => options.canTouchPage?.(event) !== false;
     const point = (touches, id) => Array.from(touches || []).find((touch) => touch.identifier === id);
+    // Use the input clock, not handler delivery time: queued touch events can
+    // reach JavaScript almost together after a main-thread stall.
+    const inputTime = (event) => Number.isFinite(event?.timeStamp) && event.timeStamp >= 0 ? event.timeStamp : now();
+    function sampleVelocity(state, x, time) {
+      const sample = { x, time }, samples = state.samples;
+      const previous = samples[samples.length - 1];
+      if (time < previous.time) return;
+      if (!state.direction && x !== previous.x) state.direction = Math.sign(previous.x - x);
+      if ((state.peak.x - x) * state.direction >= 0) state.peak = sample;
+      else if ((x - state.peak.x) * state.direction >= 8) {
+        // A deliberate reversal starts a new velocity window at the turning
+        // point. Sub-8px jitter cannot flip an otherwise forward flick.
+        state.samples = samples.filter(point => point.time >= state.peak.time);
+        state.direction *= -1;
+        state.peak = sample;
+      }
+      const history = state.samples;
+      if (time === history[history.length - 1].time) history[history.length - 1] = sample;
+      else history.push(sample);
+      while (history.length > 2 && history[1].time <= time - 60) history.shift();
+    }
+    function releaseSpeed(state, time) {
+      const samples = state.samples, end = samples[samples.length - 1];
+      let first = samples[0];
+      if (samples.length > 1 && first.time < end.time - 60) {
+        const next = samples[1], start = end.time - 60;
+        first = { time: start, x: first.x + (next.x - first.x) * (start - first.time) / (next.time - first.time) };
+      }
+      const speed = (first.x - end.x) / Math.max(8, end.time - first.time);
+      // Decay continuously while a held finger emits no moves; no 100ms cliff.
+      return speed * Math.exp(-Math.max(0, time - end.time) / 40);
+    }
     const start = (event) => {
       if (destroyed) return;
       const token = generation + 1, index = stop();
@@ -506,8 +566,10 @@
       options.onTouchPagingStart?.({ index, position, event });
       if (destroyed || token !== generation || event.touches?.length !== 1 || !allowed(event)) return;
       const p = event.touches[0];
+      const sample = { x: p.clientX, time: inputTime(event) };
       gesture = { id: p.identifier, x: p.clientX, y: p.clientY, base: position, index,
         rawBase: position < 0 ? position / resistance : position > max() ? max() + (position - max()) / resistance : position,
+        samples: [sample], peak: sample, direction: 0,
         lastX: p.clientX, lastTime: now(), velocity: 0, axis: null };
     };
     const move = (event) => {
@@ -520,6 +582,7 @@
       if (gesture.axis !== "x") return;
       if (event.cancelable !== false) event.preventDefault?.();
       suppressClick = true;
+      if (fractional) sampleVelocity(gesture, p.clientX, inputTime(event));
       const time = now(), elapsed = time - gesture.lastTime;
       if (elapsed > 0) gesture.velocity = (gesture.lastX - p.clientX) / elapsed;
       gesture.lastX = p.clientX; gesture.lastTime = time;
@@ -539,11 +602,11 @@
       if (ended.axis !== "x") { goTo(nearest(), "smooth"); return; }
       if (event.cancelable !== false) event.preventDefault?.();
       const delta = position - ended.base;
-      const fast = now() - ended.lastTime <= 100 && Math.abs(ended.velocity) >= 0.35 && Math.abs(delta) >= 12;
+      const velocity = fractional ? releaseSpeed(ended, inputTime(event)) : now() - ended.lastTime <= 100 ? ended.velocity : 0;
+      const fast = Math.abs(velocity) >= 0.35 && Math.abs(delta) >= 12;
       const far = Math.abs(delta) >= Math.max(28, viewportWidth * 0.22);
-      const direction = fast ? Math.sign(ended.velocity) : Math.sign(delta);
+      const direction = fast ? Math.sign(velocity) : Math.sign(delta);
       const target = fast || far ? ended.index + direction : nearest();
-      const velocity = now() - ended.lastTime <= 100 ? ended.velocity : 0;
       goTo(clamp(target, Math.max(0, ended.index - 1), Math.min(last(), ended.index + 1)), "smooth", true, velocity);
     };
     const cancel = () => {
@@ -607,10 +670,11 @@
     if (fractional) strip.style.setProperty("transform", `translate3d(${-position}px, 0, 0)`, "important");
     return { goTo, stop, bindTarget, refreshLayout,
       get viewportWidth() { return viewportWidth; },
-      get position() { return position; }, get isSettling() { return settling; },
+      get position() { return compositorSample ? compositorSample() : position; }, get isSettling() { return settling; },
       destroy() {
         if (destroyed) return;
         destroyed = true; generation++;
+        compositorAnimation?.cancel(); compositorAnimation = null; compositorSample = null;
         if (frame !== null) caf(frame);
         frame = null; pending = false; gesture = null; settling = false;
         observer?.disconnect();

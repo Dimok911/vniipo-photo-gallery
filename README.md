@@ -8,6 +8,30 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+### Compositor settling candidate (2.4.1, pending device evaluation)
+
+This candidate keeps the 2.4.0 held-drag path and existing explicit transform
+opt-in. Fractional release speed uses touch event timestamps, a 60ms history,
+an 8px reversal threshold and continuous decay during a stationary hold.
+Delayed delivery cannot turn the same physical input into a much faster flick,
+and a one-pixel reversal cannot send the gallery toward the opposite neighbor.
+
+Settling uses a transform Web Animation with the same monotonic Hermite curve
+expressed as cubic-bezier. Its start time is aligned with the document timeline
+to avoid an extra pending-start frame. JavaScript still updates index callbacks
+once per RAF, but no longer writes the strip transform or reads computed layout
+on each settle frame. The position getter follows animation time. New gestures
+sample the actual computed transform once, freeze it and cancel the animation
+before the application handles pinch. Completion/destroy/resize retain generation
+cancellation, image identity and reduced-motion behavior. Browsers without the
+required animation/matrix APIs use the cancellable RAF fallback.
+
+[Investigation and limitations](docs/controlled-motion-investigation.md) describe
+measured delivery/release defects, compositor evidence, and why this is a test
+candidate rather than confirmation that physical iPhone swiping is fixed.
+Production publication for device evaluation requires review and CI; it does not
+constitute user acceptance. No Experiment transfer is approved.
+
 ### Fractional strip presentation (2.4.0)
 
 Negotiate `capabilities.controlledTouchPaging >= 2` and pass both
