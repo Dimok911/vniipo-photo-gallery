@@ -116,3 +116,55 @@ test('fractional reduced motion, layout refresh and destroy leave no pending wor
   assert.equal(f.positions.length,count);assert.equal(f.listeners.size,0);
   assert.deepEqual(f.track.childNodes,f.slides);
 });
+
+function releaseTrajectory({ deliveries, hold = 0, index = 0, points } = {}) {
+  const f = fixture({ initialIndex: index });
+  f.emit('touchstart', 350, { timeStamp: 0 });
+  let inputTime = 0;
+  const samples = points || Array.from({ length: 8 }, (_, i) => [16, (i + 1) * 16]);
+  samples.forEach(([elapsed, distance], i) => {
+    inputTime += elapsed;
+    f.advance(deliveries?.[i] ?? elapsed);
+    f.emit('touchmove', 350 - distance, { timeStamp: inputTime });
+  });
+  f.advance(hold);
+  f.emit('touchend', 0, { timeStamp: inputTime + hold });
+  const positions = [];
+  for (let i = 0; i < 20; i++) { f.advance(16); positions.push(f.switcher.position); }
+  const indexAfter = f.switcher.activeIndex;
+  f.switcher.destroy();
+  return { positions, indexAfter };
+}
+
+test('release uses input timestamps: delayed/batched delivery produces the same trajectory', () => {
+  const regular = releaseTrajectory();
+  const blocked = releaseTrajectory({ deliveries: [16,16,16,16,16,16,32,1] });
+  assert.deepEqual(blocked, regular);
+  assert.ok(regular.positions[0] < 155); // No 100px launch from a 1px/ms input.
+});
+
+test('held-finger release speed decays continuously through the former 100ms cliff', () => {
+  const points = [[16,40],[16,80],[16,120]];
+  const immediate = releaseTrajectory({points});
+  const pauses = [80,99,100,101,160].map(hold => releaseTrajectory({points,hold}));
+  assert.ok(pauses[0].positions[0] < immediate.positions[0] - 20);
+  assert.ok(Math.abs(pauses[1].positions[0] - pauses[3].positions[0]) < 0.3);
+  assert.ok(pauses[4].positions[0] < pauses[0].positions[0]);
+  pauses.forEach(result => assert.equal(result.indexAfter,1));
+});
+
+test('a 1px micro-reversal keeps flick direction, but a deliberate reversal changes it', () => {
+  const prefix = [[16,40],[16,80],[16,120],[16,140]];
+  assert.equal(releaseTrajectory({index:1,points:[...prefix,[1,139]]}).indexAfter,2);
+  assert.equal(releaseTrajectory({index:1,points:[...prefix,[16,100]]}).indexAfter,0);
+});
+
+test('holding a drag produces no self-motion after its one pending frame', () => {
+  const f = fixture();
+  f.emit('touchstart');f.emit('touchmove',80);f.advance(16);
+  const before = {position:f.switcher.position, callbacks:f.positions.length};
+  for(let i=0;i<20;i++)f.advance(16);
+  assert.deepEqual({position:f.switcher.position,callbacks:f.positions.length},before);
+  assert.equal(f.frames.size,0);
+  f.switcher.destroy();
+});
