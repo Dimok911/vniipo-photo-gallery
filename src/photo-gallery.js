@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.3.0";
+  const VERSION = "2.3.1";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const edgePresentations = new WeakMap();
@@ -370,7 +370,13 @@
     const raf = options.requestAnimationFrame || win.requestAnimationFrame?.bind(win) || ((fn) => setTimeout(fn, 16));
     const caf = options.cancelAnimationFrame || win.cancelAnimationFrame?.bind(win) || clearTimeout;
     const now = options.now || (() => win.performance?.now?.() ?? Date.now());
-    const leftAt = (index) => resolveSlideLeft(track, slides[index], index);
+    let offsets = [], viewportWidth = 360;
+    const measure = () => {
+      viewportWidth = Number(track.clientWidth) || 360;
+      offsets = slides.map((slide, index) => resolveSlideLeft(track, slide, index));
+    };
+    measure();
+    const leftAt = (index) => offsets[index] || 0;
     const last = () => Math.max(0, slides.length - 1);
     const max = () => leftAt(last());
     const resistance = clamp(options.edgeResistance ?? 0.24, 0.05, 0.5);
@@ -401,6 +407,9 @@
       frame = null;
       settling = false;
       gesture = null;
+      // Read geometry once at an interaction boundary, never after every frame's
+      // scroll/style writes. Consumers can resize between gestures/navigation.
+      measure();
       // A consumer can proxy a drag from navigation controls outside the track.
       // Adopt an actual external scroll write, but preserve logical edge offset
       // when physical scrollLeft still equals our own clamped painted position.
@@ -411,7 +420,7 @@
       }
       return nearest();
     }
-    function goTo(index, behavior = "smooth", notify = true) {
+    function goTo(index, behavior = "smooth", notify = true, releaseVelocity = null) {
       if (destroyed) return nearest();
       stop();
       const target = clamp(index, 0, last()), to = leftAt(target), from = position;
@@ -424,12 +433,23 @@
       };
       if (behavior !== "smooth" || reduced || Math.abs(to - from) < 0.5) { finish(); return target; }
       settling = true;
+      const distance = Math.abs(to - from);
+      const speed = Math.max(0, (Number(releaseVelocity) || 0) * Math.sign(to - from));
+      // Match the release speed instead of always applying a new 260ms brake.
+      // Hermite's bounded starting slope keeps the path monotonic and ends at
+      // rest. Programmatic navigation and edge return use a brisk ease-out.
+      const duration = releaseVelocity === null || from < 0 || from > max()
+        ? clamp(100 + distance * 0.25, 100, 220)
+        : clamp(distance / Math.max(0.8, speed) * 1.4, 70, 220);
+      const slope = releaseVelocity === null || from < 0 || from > max()
+        ? 2.5 : clamp(speed * duration / distance, 0, 2.5);
       const started = now();
       const step = () => {
         if (destroyed || token !== generation) return;
-        const progress = clamp((now() - started) / 260, 0, 1);
+        const progress = clamp((now() - started) / duration, 0, 1);
         if (progress >= 1) { finish(); return; }
-        paint(from + (to - from) * (1 - Math.pow(1 - progress, 3)), notify);
+        const eased = slope * progress + (3 - 2 * slope) * progress ** 2 + (slope - 2) * progress ** 3;
+        paint(from + (to - from) * eased, notify);
         if (!destroyed && token === generation) frame = raf(step);
       };
       frame = raf(step);
@@ -476,10 +496,11 @@
       if (event.cancelable !== false) event.preventDefault?.();
       const delta = position - ended.base;
       const fast = now() - ended.lastTime <= 100 && Math.abs(ended.velocity) >= 0.35 && Math.abs(delta) >= 12;
-      const far = Math.abs(delta) >= Math.max(28, (Number(track.clientWidth) || 360) * 0.22);
+      const far = Math.abs(delta) >= Math.max(28, viewportWidth * 0.22);
       const direction = fast ? Math.sign(ended.velocity) : Math.sign(delta);
       const target = fast || far ? ended.index + direction : nearest();
-      goTo(clamp(target, Math.max(0, ended.index - 1), Math.min(last(), ended.index + 1)), "smooth");
+      const velocity = now() - ended.lastTime <= 100 ? ended.velocity : 0;
+      goTo(clamp(target, Math.max(0, ended.index - 1), Math.min(last(), ended.index + 1)), "smooth", true, velocity);
     };
     const cancel = () => {
       // A pinch already owns the gesture after multitouch takeover. Its cancel
@@ -654,7 +675,7 @@
     });
     if (controlled) paging = createControlledTouchPaging({
       ...options, track, slides, edge: edgeRubberBand,
-      onIndex: (index, notify) => render(index, notify && index !== activeIndex),
+      onIndex: (index, notify) => { if (index !== activeIndex) render(index, notify); },
     });
 
     function destroy() {

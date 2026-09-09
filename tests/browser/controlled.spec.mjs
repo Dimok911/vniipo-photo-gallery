@@ -93,3 +93,28 @@ test('reduced motion settles immediately and destroy restores consumer scroll st
   });
   expect(result).toEqual({index:2,settling:false,settles:1,overflow:'auto',touch:'pan-x'});
 });
+
+test('38-slide drag paints the latest finger position without per-move layout reads or class churn', async ({page}) => {
+  await setup(page);
+  const result = await page.evaluate(() => {
+    switcher.destroy();
+    while (track.children.length < 38) track.append(track.children[0].cloneNode(true));
+    slides = [...track.children];
+    const getOffset = Object.getOwnPropertyDescriptor(HTMLElement.prototype,'offsetLeft').get;
+    let reads = 0;
+    slides.forEach(slide => Object.defineProperty(slide,'offsetLeft',{get(){ reads++; return getOffset.call(this); }}));
+    switcher = VniipoPhotoGallery.createFullscreenSwitcher({
+      root:document.querySelector('.root'),track,slides,directDesktop:false,touchPaging:'controlled',
+    });
+    const observer = new MutationObserver(()=>{});
+    observer.observe(track,{subtree:true,attributes:true,attributeFilter:['class']});
+    touch('touchstart',[[350,200]]);
+    reads=0;
+    for (let x=340; x>=190; x-=10) touch('touchmove',[[x,200]]);
+    const result = {reads,mutations:observer.takeRecords().length,left:track.scrollLeft,count:slides.length};
+    observer.disconnect();
+    switcher.destroy();
+    return result;
+  });
+  expect(result).toEqual({reads:0,mutations:0,left:160,count:38});
+});
