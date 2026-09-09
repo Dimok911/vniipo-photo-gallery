@@ -8,6 +8,28 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+### Responsive controlled paging (2.3.1)
+
+The controlled mode caches slide geometry at gesture/navigation boundaries and
+only updates slide presentation classes when the visible index changes. Dragging
+still paints the latest finger coordinate synchronously; it adds no extra RAF
+queue. The animation loop no longer reads each slide's layout after writing its
+scroll position. Geometry is refreshed for the next gesture/navigation after a
+resize. Paging callbacks and the contract remain unchanged.
+
+Release settling uses remaining distance and recent finger speed instead of a
+fixed 260ms duration. A monotonic Hermite curve preserves bounded initial speed
+and ends at rest, with 70–220ms settling; navigation buttons and edge return use
+a 100–220ms ease-out. One-slide limits, edge resistance, reduced motion and
+immediate new-pinch cancellation remain in force. Adapters need no new API;
+they should continue avoiding repeated expensive work when a position callback's
+visible index has not changed.
+
+Regression checks count layout reads and class changes during a 38-slide browser
+drag, exercise fast/slow release and short remaining distance, compare simulated
+60/120Hz cadence, and retain the new-pinch-during-settle checks. These are
+deterministic work/behavior checks, not physical-device frame-rate claims.
+
 ### Interruptible controlled touch paging (2.3.0)
 
 Opt in with `touchPaging: "controlled"`, `directDesktop: false`, and negotiate

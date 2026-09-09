@@ -165,3 +165,73 @@ test('reduced motion settles synchronously; destroy and reentrant takeover preve
   f.switcher.destroy(); stale(); f.advance(400);
   assert.equal(f.track.scrollLeft, 0); assert.equal(f.listeners.size, 0); assert.equal(f.frames.size, 0);
 });
+
+test('drag and settle do not remeasure slides or rerender an unchanged visible index', () => {
+  const f = fixture();
+  let reads = 0, toggles = 0;
+  f.slides.forEach(slide => {
+    const left = slide.offsetLeft, toggle = slide.classList.toggle;
+    Object.defineProperty(slide, 'offsetLeft', { get() { reads++; return left; } });
+    slide.classList.toggle = (...args) => { toggles++; return toggle(...args); };
+  });
+  f.emit('touchstart');
+  assert.equal(reads, 3);
+  reads = 0;
+  for (let x = 190; x >= 40; x -= 10) { f.advance(8); f.emit('touchmove', x); }
+  assert.equal(f.track.scrollLeft, 160); // latest finger position is painted synchronously
+  assert.equal(reads, 0);
+  assert.equal(toggles, 0);
+  f.emit('touchmove', -10); // one visible-index boundary
+  assert.equal(toggles, 3);
+  f.emit('touchend');
+  assert.equal(reads, 3); // a single boundary refresh for the settle target
+  reads = 0; toggles = 0;
+  for (let i = 0; i < 30; i++) f.advance(8);
+  assert.equal(reads, 0);
+  assert.equal(toggles, 0);
+  f.switcher.destroy();
+});
+
+test('faster release finishes sooner and tiny remaining distance has no long braking tail', () => {
+  const fast = fixture(), slow = fixture();
+  for (const [f, elapsed] of [[fast,100], [slow,400]]) {
+    f.emit('touchstart'); f.advance(elapsed); f.emit('touchmove', 0); f.emit('touchend');
+  }
+  fast.advance(120); slow.advance(120);
+  assert.equal(fast.switcher.isSettling, false);
+  assert.equal(slow.switcher.isSettling, true);
+  slow.advance(120);
+  assert.equal(slow.track.scrollLeft, 360);
+  const close = fixture();
+  close.emit('touchstart'); close.advance(300); close.emit('touchmove', -150); close.emit('touchend');
+  close.advance(80);
+  assert.equal(close.track.scrollLeft, 360);
+  assert.equal(close.switcher.isSettling, false);
+  fast.switcher.destroy(); slow.switcher.destroy(); close.switcher.destroy();
+});
+
+test('velocity-aware settling is monotonic and independent of 60/120Hz frame cadence', () => {
+  const sixty = fixture(), oneTwenty = fixture();
+  for (const f of [sixty,oneTwenty]) {
+    f.emit('touchstart'); f.advance(100); f.emit('touchmove', 0); f.emit('touchend');
+  }
+  for (let i=0; i<5; i++) sixty.advance(16);
+  for (let i=0; i<10; i++) oneTwenty.advance(8);
+  assert.equal(sixty.track.scrollLeft, oneTwenty.track.scrollLeft);
+  let previous = sixty.track.scrollLeft;
+  for (let i=0; i<30; i++) {
+    sixty.advance(8);
+    assert.ok(sixty.track.scrollLeft >= previous && sixty.track.scrollLeft <= 360);
+    previous = sixty.track.scrollLeft;
+  }
+  sixty.switcher.destroy(); oneTwenty.switcher.destroy();
+});
+
+test('cached geometry refreshes after resize on the next navigation', () => {
+  const f = fixture();
+  f.track.clientWidth = 420;
+  f.slides[1].offsetLeft = 420; f.slides[2].offsetLeft = 840;
+  f.switcher.goTo(2, 'instant');
+  assert.equal(f.track.scrollLeft, 840);
+  f.switcher.destroy();
+});
