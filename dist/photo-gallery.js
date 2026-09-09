@@ -1,7 +1,7 @@
 (function installVniipoPhotoGallery(global) {
   "use strict";
 
-  const VERSION = "2.3.1";
+  const VERSION = "2.4.0";
   const CONTRACT_VERSION = 2;
   const bindings = new WeakMap();
   const edgePresentations = new WeakMap();
@@ -367,13 +367,33 @@
   function createControlledTouchPaging(options) {
     const { track, slides, edge } = options;
     const win = options.windowRef || global;
+    const fractional = options.touchPagingPresentation === "transform";
+    const doc = track.ownerDocument || global.document;
+    let strip = null;
+    const placeholders = [];
+    if (fractional) {
+      strip = doc.createElement("div");
+      strip.className = "vpg-controlled-strip";
+      for (const [property, value] of Object.entries({
+        display: "flex", position: "relative", flex: "0 0 100%", width: "100%", height: "100%",
+        "min-width": "0", "box-sizing": "border-box", margin: "0", padding: "0", border: "0",
+        "will-change": "transform", transition: "none", "scroll-snap-type": "none",
+      })) strip.style.setProperty(property, value, "important");
+      track.insertBefore(strip, slides[0] || null);
+      slides.forEach(slide => {
+        const marker = doc.createComment("vpg-slide");
+        slide.parentNode.insertBefore(marker, slide);
+        placeholders.push([slide, marker]);
+        strip.appendChild(slide);
+      });
+    }
     const raf = options.requestAnimationFrame || win.requestAnimationFrame?.bind(win) || ((fn) => setTimeout(fn, 16));
     const caf = options.cancelAnimationFrame || win.cancelAnimationFrame?.bind(win) || clearTimeout;
     const now = options.now || (() => win.performance?.now?.() ?? Date.now());
     let offsets = [], viewportWidth = 360;
     const measure = () => {
       viewportWidth = Number(track.clientWidth) || 360;
-      offsets = slides.map((slide, index) => resolveSlideLeft(track, slide, index));
+      offsets = slides.map((slide, index) => resolveSlideLeft(strip || track, slide, index));
     };
     measure();
     const leftAt = (index) => offsets[index] || 0;
@@ -383,7 +403,7 @@
     const edgeLimit = clamp(options.edgeMaxOffset ?? 44, 12, 72);
     let position = leftAt(clamp(options.initialIndex, 0, last()));
     let frame = null, generation = 0, gesture = null, settling = false, destroyed = false;
-    let suppressClick = false;
+    let suppressClick = false, pending = false;
     const nearest = () => {
       let index = 0, distance = Infinity;
       slides.forEach((slide, i) => {
@@ -395,36 +415,57 @@
     function paint(value, notify = true) {
       const token = generation;
       position = value;
-      track.scrollLeft = clamp(position, 0, max());
-      edge.setOffset(position < 0 ? 0 : last(), position < 0 ? -position : position > max() ? max() - position : 0);
+      if (fractional) strip.style.setProperty("transform", `translate3d(${-position}px, 0, 0)`, "important");
+      else {
+        track.scrollLeft = clamp(position, 0, max());
+        edge.setOffset(position < 0 ? 0 : last(), position < 0 ? -position : position > max() ? max() - position : 0);
+      }
       const index = nearest();
       options.onIndex(index, notify);
       if (!destroyed && token === generation) options.onTouchPagingPosition?.({ index, position, dragging: Boolean(gesture), settling });
     }
+    function queue(value) {
+      position = value;
+      pending = true;
+      if (frame !== null) return;
+      const token = generation;
+      frame = raf(() => {
+        if (destroyed || token !== generation) return;
+        frame = null; pending = false;
+        paint(position);
+      });
+    }
     function stop() {
-      generation++;
+      const token = ++generation;
       if (frame !== null) caf(frame);
       frame = null;
       settling = false;
       gesture = null;
+      // Flush before consumer pinch handlers select their image. Clear pending
+      // first so a callback can safely reenter goTo/stop/destroy.
+      if (pending) { pending = false; paint(position); }
+      if (destroyed || token !== generation) return nearest();
       // Read geometry once at an interaction boundary, never after every frame's
       // scroll/style writes. Consumers can resize between gestures/navigation.
       measure();
       // A consumer can proxy a drag from navigation controls outside the track.
       // Adopt an actual external scroll write, but preserve logical edge offset
       // when physical scrollLeft still equals our own clamped painted position.
-      const actual = clamp(track.scrollLeft, 0, max());
-      if (Math.abs(actual - clamp(position, 0, max())) > 1) {
-        position = actual;
-        edge.clear();
+      if (!fractional) {
+        const actual = clamp(track.scrollLeft, 0, max());
+        if (Math.abs(actual - clamp(position, 0, max())) > 1) {
+          position = actual;
+          edge.clear();
+        }
       }
       return nearest();
     }
     function goTo(index, behavior = "smooth", notify = true, releaseVelocity = null) {
       if (destroyed) return nearest();
+      const token = generation + 1;
       stop();
+      if (destroyed || token !== generation) return nearest();
       const target = clamp(index, 0, last()), to = leftAt(target), from = position;
-      const token = generation;
       const reduced = options.reducedMotion ?? win.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
       const finish = () => {
         settling = false; frame = null;
@@ -458,7 +499,9 @@
     const allowed = (event) => options.canTouchPage?.(event) !== false;
     const point = (touches, id) => Array.from(touches || []).find((touch) => touch.identifier === id);
     const start = (event) => {
-      const index = stop(), token = generation;
+      if (destroyed) return;
+      const token = generation + 1, index = stop();
+      if (destroyed || token !== generation) return;
       suppressClick = false;
       options.onTouchPagingStart?.({ index, position, event });
       if (destroyed || token !== generation || event.touches?.length !== 1 || !allowed(event)) return;
@@ -485,7 +528,8 @@
       else if (next > max()) next = max() + Math.min(edgeLimit, (next - max()) * resistance);
       next = clamp(next, gesture.index === 0 ? -edgeLimit : leftAt(gesture.index - 1),
         gesture.index === last() ? max() + edgeLimit : leftAt(gesture.index + 1));
-      paint(next);
+      if (fractional) queue(next);
+      else paint(next);
     };
     const end = (event) => {
       if (!gesture) return;
@@ -517,12 +561,67 @@
       ["touchend", end, { capture: true, passive: false }],
       ["touchcancel", cancel, { capture: true, passive: true }],
       ["click", click, { capture: true }]];
-    listeners.forEach(([type, fn, config]) => track.addEventListener?.(type, fn, config));
+    const targets = new Map(), handled = new WeakSet();
+    function bindTarget(target) {
+      if (!target?.addEventListener || destroyed) return () => {};
+      if (targets.has(target)) return targets.get(target);
+      const touchAction = fractional && target !== track && target.style?.setProperty
+        ? [target.style.getPropertyValue("touch-action"), target.style.getPropertyPriority("touch-action")] : null;
+      if (touchAction) target.style.setProperty("touch-action", "none", "important");
+      const handlers = listeners.map(([type, fn, config]) => {
+        const handler = event => {
+          if (handled.has(event)) return;
+          handled.add(event);
+          fn(event);
+        };
+        target.addEventListener(type, handler, config);
+        return [type, handler, config];
+      });
+      const unbind = () => {
+        if (targets.get(target) !== unbind) return;
+        handlers.forEach(([type, fn, config]) => target.removeEventListener(type, fn, config));
+        targets.delete(target);
+        if (touchAction) {
+          if (touchAction[0]) target.style.setProperty("touch-action", ...touchAction);
+          else target.style.removeProperty("touch-action");
+        }
+        if (!destroyed) stop();
+      };
+      targets.set(target, unbind);
+      return unbind;
+    }
+    bindTarget(track);
+    function refreshLayout() {
+      if (destroyed) return nearest();
+      const index = nearest();
+      return goTo(index, "instant");
+    }
+    const Resize = options.ResizeObserver || win.ResizeObserver;
+    const observer = fractional && Resize ? new Resize(() => {
+      if (!destroyed && Number(track.clientWidth) !== viewportWidth) refreshLayout();
+    }) : null;
+    observer?.observe(track);
     // Initialization has no callbacks: applications often finish declaring their
     // pinch/image state only after createFullscreenSwitcher has returned.
-    track.scrollLeft = clamp(position, 0, max());
-    return { goTo, stop, get position() { return position; }, get isSettling() { return settling; },
-      destroy() { destroyed = true; stop(); edge.clear(); listeners.forEach(([type, fn, config]) => track.removeEventListener?.(type, fn, config)); } };
+    track.scrollLeft = fractional ? 0 : clamp(position, 0, max());
+    if (fractional) strip.style.setProperty("transform", `translate3d(${-position}px, 0, 0)`, "important");
+    return { goTo, stop, bindTarget, refreshLayout,
+      get viewportWidth() { return viewportWidth; },
+      get position() { return position; }, get isSettling() { return settling; },
+      destroy() {
+        if (destroyed) return;
+        destroyed = true; generation++;
+        if (frame !== null) caf(frame);
+        frame = null; pending = false; gesture = null; settling = false;
+        observer?.disconnect();
+        targets.forEach(unbind => unbind());
+        edge.clear();
+        placeholders.forEach(([slide, marker]) => {
+          if (slide.parentNode === strip && marker.parentNode) marker.parentNode.insertBefore(slide, marker);
+          marker.remove();
+        });
+        strip?.remove();
+      } };
   }
 
   function createFullscreenSwitcher(options = {}) {
@@ -553,7 +652,8 @@
       // Inline important also wins against consumer-specific important rules.
       // Restore exact values/priorities when this binding is destroyed.
       for (const [property, value] of Object.entries({
-        "overflow-x": "hidden", "overflow-y": "hidden", "touch-action": "none",
+        "overflow-x": options.touchPagingPresentation === "transform" ? "clip" : "hidden",
+        "overflow-y": options.touchPagingPresentation === "transform" ? "clip" : "hidden", "touch-action": "none",
         "scroll-snap-type": "none", "scroll-behavior": "auto", "overscroll-behavior-x": "none", "overscroll-behavior-y": "none",
         "-webkit-overflow-scrolling": "auto",
       })) {
@@ -700,9 +800,13 @@
     return {
       directDesktop,
       touchPaging: controlled ? "controlled" : "native",
+      touchPagingPresentation: controlled && options.touchPagingPresentation === "transform" ? "transform" : "scroll",
       get position() { return paging?.position ?? Number(track?.scrollLeft || 0); },
       get isSettling() { return paging?.isSettling ?? false; },
       stopTouchPaging: () => paging?.stop(),
+      bindTouchPagingTarget: (element) => paging?.bindTarget(element) || (() => {}),
+      refreshTouchPagingLayout: () => paging?.refreshLayout(),
+      get viewportWidth() { return paging?.viewportWidth ?? Number(track?.clientWidth || 0); },
       get activeIndex() { return activeIndex; },
       get presentedIndex() { return presentedIndex; },
       activate,
@@ -1490,7 +1594,7 @@
       fullscreenEdgeSettling: 2,
       fullscreenEdgeRubberBand: 2,
       readyFullscreenNavigation: 1,
-      controlledTouchPaging: 1,
+      controlledTouchPaging: 2,
     }),
     bindInlineGalleries,
     createFullscreenSourceController,
