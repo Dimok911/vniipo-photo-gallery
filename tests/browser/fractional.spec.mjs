@@ -218,24 +218,38 @@ test('compositor settling moves on the first RAF and freezes the actual screen p
     touch('touchstart',[[350,200]]);touch('touchmove',[[50,200]]);touch('touchend',[]);
     const released = -slides[0].getBoundingClientRect().left;
     await new Promise(requestAnimationFrame);
-    return {released,first:-slides[0].getBoundingClientRect().left,logical:switcher.position};
+    const first = -slides[0].getBoundingClientRect().left;
+    // A layout read and animation.currentTime can sample a running compositor
+    // at different instants. Pause only this curve check so both clocks agree.
+    const animation = track.getAnimations({subtree:true})[0];
+    animation.pause(); await animation.ready;
+    return {released,first,paused:-slides[0].getBoundingClientRect().left,logical:switcher.position};
   });
   expect(first.released).toBeCloseTo(300,3);
   expect(first.first).toBeGreaterThan(first.released);
-  expect(first.logical).toBeCloseTo(first.first,2);
+  expect(first.logical).toBeCloseTo(first.paused,2);
   const frozen = await page.evaluate(() => {
     switcher.goTo(0,'smooth');
     return new Promise(resolve => requestAnimationFrame(() => {
-      const before=-slides[0].getBoundingClientRect().left;
+      const strip=track.querySelector('.vpg-controlled-strip'),computed=window.getComputedStyle.bind(window);
+      let sampled;
+      window.getComputedStyle=(element,...args)=>{
+        const style=computed(element,...args);
+        if(element!==strip)return style;
+        const transform=style.transform;
+        sampled=-new DOMMatrixReadOnly(transform).m41;
+        return {transform};
+      };
       switcher.stopTouchPaging();
-      resolve({before,after:-slides[0].getBoundingClientRect().left,position:switcher.position,animations:track.getAnimations({subtree:true}).length});
+      window.getComputedStyle=computed;
+      resolve({sampled,after:-slides[0].getBoundingClientRect().left,position:switcher.position,animations:track.getAnimations({subtree:true}).length});
     }));
   });
-  expect(frozen.after).toBeCloseTo(frozen.before,3);
-  expect(frozen.position).toBeCloseTo(frozen.before,3);
+  expect(frozen.after).toBeCloseTo(frozen.sampled,3);
+  expect(frozen.position).toBeCloseTo(frozen.sampled,3);
   expect(frozen.animations).toBe(0);
   await page.waitForTimeout(300);
-  expect(await page.evaluate(()=>-slides[0].getBoundingClientRect().left)).toBeCloseTo(frozen.before,3);
+  expect(await page.evaluate(()=>-slides[0].getBoundingClientRect().left)).toBeCloseTo(frozen.sampled,3);
 });
 
 test('compositor settling makes no per-frame transform writes or computed-style reads; destroy cancels it', async ({page}) => {
