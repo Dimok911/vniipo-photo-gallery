@@ -8,7 +8,7 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
-### Compositor settling candidate (2.4.1, not yet published)
+### Compositor settling candidate (2.4.1, pending device evaluation)
 
 This candidate keeps the 2.4.0 held-drag path and existing explicit transform
 opt-in. Fractional release speed uses touch event timestamps, a 60ms history,
@@ -29,7 +29,8 @@ required animation/matrix APIs use the cancellable RAF fallback.
 [Investigation and limitations](docs/controlled-motion-investigation.md) describe
 measured delivery/release defects, compositor evidence, and why this is a test
 candidate rather than confirmation that physical iPhone swiping is fixed.
-Publication requires the pending evaluation; no Experiment transfer is approved.
+Production publication for device evaluation requires review and CI; it does not
+constitute user acceptance. No Experiment transfer is approved.
 
 ### Fractional strip presentation (2.4.0)
 

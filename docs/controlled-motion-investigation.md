@@ -1,6 +1,6 @@
 # Controlled movement: investigation after the 2.4.0 device rejection
 
-The user tested Production v1602 / gallery 2.4.0 on an iPhone 16 Pro Max with Safari 27 beta and reported no noticeable improvement. Exact OS build, power mode and on-device traces are unavailable. Fractional positioning alone did not solve the reported experience. This change remains an unpublished candidate; there is no approval to transfer it to Experiment.
+The user tested Production v1602 / gallery 2.4.0 on an iPhone 16 Pro Max with Safari 27 beta and reported no noticeable improvement. Exact OS build, power mode and on-device traces are unavailable. Fractional positioning alone did not solve the reported experience. This change remains a candidate for device evaluation; there is no approval to transfer it to Experiment.
 
 ## Input and held drag
 
@@ -48,4 +48,4 @@ A native-drag/custom-settle hybrid would have to stop native momentum at release
 
 ## Evaluation boundary
 
-Test the same full application artifact, separately checking held drag, release after fast motion, a stationary hold before release, a tiny reversal, deliberate reversal, and a new pinch while settling. If needed, collect event timestamps, handler entry times, RAF cadence and first-write times locally in a diagnostic build without photo sources or user data. Such logs describe scheduling, not screen FPS. The application owner is performing independent whole-artifact regression tests. Shared publication remains on hold pending evaluation.
+Test the same full application artifact, separately checking held drag, release after fast motion, a stationary hold before release, a tiny reversal, deliberate reversal, and a new pinch while settling. If needed, collect event timestamps, handler entry times, RAF cadence and first-write times locally in a diagnostic build without photo sources or user data. Such logs describe scheduling, not screen FPS. The application owner is performing independent whole-artifact regression tests. Production publication for device evaluation is separate from user acceptance; transfer to Experiment is not authorized.
