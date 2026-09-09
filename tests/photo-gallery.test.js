@@ -14,7 +14,7 @@ vm.runInContext(source, context);
 const runtime = context.globalThis.VniipoPhotoGallery;
 
 test("publishes a stable contract and reusable API", () => {
-  assert.equal(runtime.version, "2.3.1");
+  assert.equal(runtime.version, "2.4.0");
   assert.equal(runtime.contractVersion, 2);
   assert.equal(runtime.capabilities.fullscreenSourceLifecycle, 1);
   assert.equal(runtime.capabilities.safeFullscreenImageReplace, 1);

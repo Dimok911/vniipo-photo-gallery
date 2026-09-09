@@ -8,6 +8,65 @@ Framework-agnostic runtime for inline photo galleries shared by OVIK, Bikepackin
 
 ## Browser contract
 
+### Fractional strip presentation (2.4.0)
+
+Negotiate `capabilities.controlledTouchPaging >= 2` and pass both
+`touchPaging: "controlled"` and `touchPagingPresentation: "transform"`. The
+returned `touchPagingPresentation` is `"transform"` only when this mode is active.
+Without the new option, controlled consumers retain the 2.3 scrollLeft behavior;
+native scrolling remains the default. This lets stable update before adapters.
+
+The track is a fixed `overflow: clip` viewport. A new `.vpg-controlled-strip`
+inside it holds the original slide nodes and translates by fractional CSS pixels.
+The strip is positioned, flex, width/height 100%, with no shrinking; slide sizing
+remains the adapter's responsibility. Avoid direct-child track/slide selectors.
+Image transforms, sizes, sources and node identities are untouched. Bounded edge
+overshoot moves this strip too, without a second image translation. Destroy
+restores slide order using placeholders and restores previous inline policies.
+
+Moves record only the latest logical coordinate and paint at most once per RAF.
+`position` includes pending input; `activeIndex` and Position callbacks follow
+painted frames. `stopTouchPaging()` synchronously flushes pending input, cancels
+RAF/settling and returns the nearest index, without a Settle callback. Touch start
+capture does this before Start callbacks and application pinch handlers. A new
+two-finger gesture cannot be overwritten by an old drag/settle frame. End, explicit
+navigation and layout refresh may flush synchronously at their boundaries.
+
+```js
+const switcher = VniipoPhotoGallery.createFullscreenSwitcher({
+  root, track, slides, directDesktop: false,
+  touchPaging: "controlled", touchPagingPresentation: "transform",
+  canTouchPage: () => scale <= 1 && !pinching,
+  onTouchPagingStart, onTouchPagingPosition, onTouchPagingSettle,
+});
+const unbind = switcher.bindTouchPagingTarget(nextButton);
+// Before pinch selects an image (capture already does this for bound targets):
+const index = switcher.stopTouchPaging();
+switcher.goTo(index, "instant");
+// After application layout changes:
+switcher.refreshTouchPagingLayout();
+```
+
+`bindTouchPagingTarget(element)` installs the same capture touch handling on
+external navigation controls and suppresses the click after a horizontal drag.
+Taps retain their normal click. It sets touch-action none, returns an idempotent
+unbind function, and automatically removes handlers/restores styles on destroy.
+Binding nested targets does not process an event twice. The application still
+owns click navigation and pinch/pan eligibility.
+
+`refreshTouchPagingLayout()` stops motion, measures geometry, aligns the nearest
+index from the old layout in the new layout, and emits Settle. `viewportWidth`
+returns cached CSS pixels. A ResizeObserver automatically handles width changes;
+height-only changes preserve motion. Adapters may refresh explicitly after their
+own sizing. Use controller position/width instead of track.scrollLeft, disable
+native scroll/settle paths, and use bound controls instead of writing scrollLeft.
+Continue freezing image/source work during gestures and shared settling.
+
+Regression coverage includes latest-input RAF batching, pending-input pinch,
+reentrant navigation/destroy, fast release/reversal/edges, proxy controls and
+resize. WebKit tests verify 12 distinct image rectangles and raster samples for
+0.2 CSS-pixel input steps. These checks do not measure physical iPhone FPS.
+
 ### Responsive controlled paging (2.3.1)
 
 The controlled mode caches slide geometry at gesture/navigation boundaries and
